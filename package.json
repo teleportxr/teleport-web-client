@@ -1,0 +1,55 @@
+{
+  "name": "teleport-web-client",
+  "version": "0.1.0",
+  "description": "Browser-native TypeScript client for the Teleport XR streaming protocol.",
+  "type": "module",
+  "main": "./dist/teleport-web-client.umd.cjs",
+  "module": "./dist/teleport-web-client.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/teleport-web-client.js",
+      "require": "./dist/teleport-web-client.umd.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly --declaration -p tsconfig.build.json",
+    "dev": "vite",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teleportxr/teleport-web-client.git"
+  },
+  "keywords": [
+    "teleport",
+    "webxr",
+    "webrtc",
+    "three"
+  ],
+  "author": "Teleport XR",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/teleportxr/teleport-web-client/issues"
+  },
+  "homepage": "https://github.com/teleportxr/teleport-web-client#readme",
+  "dependencies": {
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.184.0",
+    "@vitest/ui": "^4.1.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  }
+}

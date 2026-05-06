@@ -23,7 +23,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    open: "/examples/minimal/index.html",
+    open: true,
   },
   test: {
     environment: "node",

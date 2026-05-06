@@ -62,3 +62,9 @@ export {
 } from "./wire/messages.js";
 
 export { TeleportViewerElement } from "./component.js";
+
+export {
+  normalizeSignalingUrl,
+  parseTeleportUrl,
+  type ParsedTeleportUrl,
+} from "./url.js";

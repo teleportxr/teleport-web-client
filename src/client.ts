@@ -3,6 +3,7 @@
 
 import { SignalingClient } from "./transport/signaling.js";
 import { TeleportPeerConnection, type ChannelKey } from "./transport/peer.js";
+import { normalizeSignalingUrl } from "./url.js";
 import {
   parseCommand,
   type ParsedCommand,
@@ -54,7 +55,7 @@ export class TeleportClient {
 
   constructor(opts: TeleportClientOptions) {
     this.options = opts;
-    this.signaling = new SignalingClient(opts.url);
+    this.signaling = new SignalingClient(normalizeSignalingUrl(opts.url));
     this.peer = new TeleportPeerConnection(opts.rtcConfig);
     this.wire();
   }

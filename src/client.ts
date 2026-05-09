@@ -185,10 +185,10 @@ export class TeleportClient {
         this.setState("streaming");
         break;
       case CommandPayloadType.PingForLatency: {
-        const latencyNs = BigInt(
-          Math.max(0, Math.floor((performance.now() - this.pingT0Ms) * 1e6)),
+        const latencyUs = BigInt(
+          Math.max(0, Math.floor((performance.now() - this.pingT0Ms) * 1e3)),
         );
-        this.sendReliable(buildPongForLatency(command.unixTimeNs, latencyNs));
+        this.sendReliable(buildPongForLatency(command.unixTimeUs, latencyUs));
         this.pingT0Ms = performance.now();
         break;
       }

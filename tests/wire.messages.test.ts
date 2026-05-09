@@ -61,7 +61,7 @@ describe("client message builders", () => {
     expect(bytes.byteLength).toBe(58 + 3 * 8);
   });
 
-  it("buildPongForLatency echoes the original ns and reports the latency", () => {
+  it("buildPongForLatency echoes the original us and reports the latency", () => {
     const bytes = buildPongForLatency(1234n, 5678n);
     const r = new BufferReader(bytes);
     expect(r.u8()).toBe(ClientMessagePayloadType.PongForLatency);

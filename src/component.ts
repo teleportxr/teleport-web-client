@@ -118,9 +118,9 @@ export class TeleportViewerElement extends HTMLElement {
 
   private handleState(state: ClientState): void {
     if (this.statusEl) this.statusEl.textContent = state;
-    this.dispatchEvent(
-      new CustomEvent(state, { bubbles: true }),
-    );
+    // A single "state" event carries the phase as detail. Earlier versions
+    // also dispatched an event named after the state itself, but that
+    // collides with the dedicated "error" event when state === "error".
     this.dispatchEvent(
       new CustomEvent("state", { detail: state, bubbles: true }),
     );

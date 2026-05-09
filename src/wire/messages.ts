@@ -9,13 +9,15 @@ import {
   type Uid,
 } from "./types.js";
 
-/** Common ClientMessage header: 1-byte tag + 8-byte timestamp_unix_ms. */
+/** Common ClientMessage header: 1-byte tag + 8-byte timestamp_session_us
+ *  (microseconds elapsed since the client's session start; here, the page's
+ *  performance time origin). */
 function startMessage(
   w: BufferWriter,
   kind: ClientMessagePayloadType,
-  timestampUnixMs: bigint = BigInt(Date.now()),
+  timestampSessionUs: bigint = BigInt(Math.floor(performance.now() * 1000)),
 ): void {
-  w.u8(kind).i64(timestampUnixMs);
+  w.u8(kind).i64(timestampSessionUs);
 }
 
 export interface DisplayInfo {
@@ -73,12 +75,12 @@ export function buildHandshake(opts: HandshakeOptions): Uint8Array {
 
 /** Pong response to a PingForLatencyCommand. */
 export function buildPongForLatency(
-  unixTimeNs: bigint,
-  serverToClientLatencyNs: bigint,
+  unixTimeUs: bigint,
+  serverToClientLatencyUs: bigint,
 ): Uint8Array {
   const w = new BufferWriter(32);
   startMessage(w, ClientMessagePayloadType.PongForLatency);
-  w.i64(unixTimeNs).i64(serverToClientLatencyNs);
+  w.i64(unixTimeUs).i64(serverToClientLatencyUs);
   return w.toUint8Array();
 }
 

@@ -129,7 +129,7 @@ export interface ShutdownCommand {
 
 export interface PingForLatencyCommand {
   kind: CommandPayloadType.PingForLatency;
-  unixTimeNs: bigint;
+  unixTimeUs: bigint;
 }
 
 export interface ReconfigureVideoCommand {
@@ -208,7 +208,7 @@ export function parseCommand(packet: Uint8Array): ParsedCommand {
     case CommandPayloadType.Shutdown:
       return { kind: CommandPayloadType.Shutdown };
     case CommandPayloadType.PingForLatency:
-      return { kind: CommandPayloadType.PingForLatency, unixTimeNs: r.i64() };
+      return { kind: CommandPayloadType.PingForLatency, unixTimeUs: r.i64() };
     case CommandPayloadType.ReconfigureVideo:
       return {
         kind: CommandPayloadType.ReconfigureVideo,

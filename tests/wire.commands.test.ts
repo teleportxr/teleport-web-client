@@ -56,7 +56,7 @@ describe("parseCommand", () => {
     const cmd = parseCommand(w.toUint8Array());
     expect(cmd.kind).toBe(CommandPayloadType.PingForLatency);
     if (cmd.kind === CommandPayloadType.PingForLatency) {
-      expect(cmd.unixTimeNs).toBe(1234567890n);
+      expect(cmd.unixTimeUs).toBe(1234567890n);
     }
   });
 

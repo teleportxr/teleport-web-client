@@ -1,0 +1,14 @@
+{
+  "name": "teleport-load-test",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Headless scaling/performance test for the Teleport Node.js server. Uses the teleport-web-client protocol/transport core, no rendering.",
+  "type": "module",
+  "scripts": {
+    "smoke": "node src/smoke.js"
+  },
+  "dependencies": {
+    "@roamhq/wrtc": "^0.10.0",
+    "ws": "^8.13.0"
+  }
+}

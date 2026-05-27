@@ -43,6 +43,7 @@
   },
   "homepage": "https://github.com/teleportxr/teleport-web-client#readme",
   "dependencies": {
+    "ktx": "^0.0.1-beta",
     "three": "^0.184.0"
   },
   "devDependencies": {

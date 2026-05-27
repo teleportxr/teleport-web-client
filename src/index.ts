@@ -8,6 +8,36 @@ export {
 
 export { SignalingClient } from "./transport/signaling.js";
 export {
+  AvatarManager,
+  type AvatarPolicyCallback,
+  type AvatarReplyFn,
+  type AvatarResultCallback,
+  type AvatarRevokeCallback,
+  type AvatarSendFn,
+} from "./avatar_manager.js";
+export {
+  AVATAR_SIGNAL_TYPES,
+  decodeCapabilities,
+  encodeCapabilities,
+  encodeAvatarOffer,
+  encodePeerAvatarFailed,
+  parseAvatarPolicy,
+  parseAvatarResult,
+  parseAvatarRevoke,
+  parsePeerAvatar,
+  type AvatarDeclared,
+  type AvatarOffer,
+  type AvatarPolicy,
+  type AvatarProofOffer,
+  type AvatarProofPolicy,
+  type AvatarRequirements,
+  type AvatarResult,
+  type AvatarRevoke,
+  type PeerAvatar,
+  type PeerAvatarFailed,
+  type SignalingCapabilities,
+} from "./protocol/avatars.js";
+export {
   TeleportPeerConnection,
   type ChannelKey,
   type PeerHandlers,
@@ -30,6 +60,74 @@ export {
 
 export { BufferReader } from "./wire/reader.js";
 export { BufferWriter } from "./wire/writer.js";
+
+export {
+  parseGeometryBody,
+  parseGeometryChunk,
+} from "./geometry/decoder.js";
+export {
+  MaterialMode,
+  MeshCompressionType,
+  NodeDataType,
+  TextureCompression,
+  type AnimationPayload,
+  type BoneTrack,
+  type FontAtlasPayload,
+  type FontMap,
+  type GeometryPayload,
+  type Glyph,
+  type LightComponent,
+  type LinkComponent,
+  type MaterialExtension,
+  type MaterialPayload,
+  type MeshComponent,
+  type MeshPayload,
+  type MeshPointerPayload,
+  type MeshSubmesh,
+  type NodeComponent,
+  type NodePayload,
+  type PositionKeyframe,
+  type RemoveNodesPayload,
+  type RotationKeyframe,
+  type SkeletonPayload,
+  type TextCanvasComponentRef,
+  type TextCanvasPayload,
+  type TextureAccessor,
+  type TexturePayload,
+  type TexturePointerPayload,
+  type Transform,
+  type UnknownPayload,
+  type Vec3,
+  type Vec4,
+} from "./geometry/payload.js";
+
+export {
+  AssetFetcher,
+  type AssetFetcherOptions,
+  type FetchedAsset,
+} from "./http/assets.js";
+export { ResourceCache, type PendingPointer } from "./scene/cache.js";
+export { SceneAdapter, type SceneAdapterOptions } from "./scene/adapter.js";
+export {
+  DefaultMeshDecoder,
+  DefaultTextureDecoder,
+  isGltfBinary,
+  isJpeg,
+  isKtx2,
+  isPng,
+  resolveMeshFormat,
+  resolveTextureFormat,
+  type DecodedMesh,
+  type MeshDecoder,
+  type MeshFormatHint,
+  type TextureDecoder,
+  type TextureFormatHint,
+} from "./scene/loaders.js";
+export {
+  ResourceResolver,
+  SUPPORTED_TEXTURE_COMPRESSIONS,
+  type ResourceResolverOptions,
+} from "./scene/resources.js";
 
 export {
   parseCommand,

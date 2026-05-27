@@ -116,6 +116,12 @@ export class BufferReader {
     return new TextDecoder("utf-8").decode(slice);
   }
 
+  /** Read a uint16-length-prefixed UTF-8 string (the protocol-wide convention). */
+  string(): string {
+    const length = this.u16();
+    return length > 0 ? this.utf8(length) : "";
+  }
+
   /** Skip `count` bytes. */
   skip(count: number): void {
     this.offset += count;

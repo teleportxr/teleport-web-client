@@ -11,11 +11,11 @@ WebCodecs video decode, WebAudio, WebXR and Three.js.
 | 0     | Bootstrap: Vite, TypeScript, Vitest    | done           |
 | 1     | Signalling + WebRTC transport          | done           |
 | 2     | Wire format + command/message dispatch | done           |
-| 3     | Geometry channel + HTTP asset cache    | stub           |
+| 3     | Geometry channel + HTTP asset cache    | parsers + dispatch + cache + adapter (node tree); Draco/material/texture decode pending |
 | 4     | Video (WebCodecs, cubemap unpack)      | stub           |
 | 5     | Audio (output + microphone input)      | stub           |
 | 6     | Input + WebXR poses                    | stub           |
-| 7     | `<teleport-viewer>` Web Component      | placeholder    |
+| 7     | `<teleport-viewer>` Web Component      | renders streamed node tree with OrbitControls; placeholder visuals |
 
 The plan is tracked in [`web_client_plan.md`](../web_client_plan.md) of the
 parent `teleport` workspace.

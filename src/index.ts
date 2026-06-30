@@ -161,6 +161,39 @@ export {
 
 export { TeleportViewerElement } from "./component.js";
 
+// Input layer (Phase 6): device readers, canonical paths, the swappable
+// control models, and the abstract-input reporter.
+export {
+  DeviceHub,
+  emptySnapshot,
+  snapshotAxis,
+  snapshotButton,
+  type DeviceSnapshot,
+  type InputDevice,
+} from "./input/devices.js";
+export { DesktopInput, type DesktopInputOptions } from "./input/desktop.js";
+export { GamepadInput, type GamepadInputOptions } from "./input/gamepad.js";
+export { InputReporter, type InputReport } from "./input/report.js";
+export { compileBindings, type InputBinding } from "./input/bind.js";
+export {
+  FreeFlyModel,
+  type FreeFlyOptions,
+} from "./input/models/freefly.js";
+export type {
+  ControlModel,
+  ControlOutput,
+  Pose,
+  PoseDynamic,
+} from "./input/control_model.js";
+export * as inputPaths from "./input/paths.js";
+export {
+  IDENTITY_QUAT,
+  quatFromYawPitch,
+  rotateVec,
+  type Quat,
+  type Vec3 as InputVec3,
+} from "./input/math.js";
+
 export {
   normalizeSignalingUrl,
   parseTeleportUrl,

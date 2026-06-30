@@ -19,6 +19,13 @@ import {
   CommandPayloadType,
   LightingMode,
 } from "./wire/types.js";
+import { DeviceHub } from "./input/devices.js";
+import { DesktopInput } from "./input/desktop.js";
+import { GamepadInput } from "./input/gamepad.js";
+import { FreeFlyModel } from "./input/models/freefly.js";
+import { InputReporter } from "./input/report.js";
+import type { ControlModel } from "./input/control_model.js";
+import { buildControllerPoses } from "./wire/messages.js";
 
 const TEMPLATE = document.createElement("template");
 TEMPLATE.innerHTML = `
@@ -38,7 +45,7 @@ TEMPLATE.innerHTML = `
 
 export class TeleportViewerElement extends HTMLElement {
   static get observedAttributes(): string[] {
-    return ["src", "autoconnect"];
+    return ["src", "autoconnect", "control-model"];
   }
 
   /** The underlying TeleportClient once `connect()` has been called.
@@ -67,6 +74,14 @@ export class TeleportViewerElement extends HTMLElement {
   private rafId = 0;
   private statusEl: HTMLDivElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  // Input / control state (Phase 6). The hub + control model are created only
+  // when a `control-model` attribute selects one; otherwise the element keeps
+  // its OrbitControls inspection camera and captures no device input.
+  private deviceHub: DeviceHub | null = null;
+  private controlModel: ControlModel | null = null;
+  private inputReporter = new InputReporter();
+  private lastFrameMs = 0;
+  private streaming = false;
 
   constructor() {
     super();
@@ -113,6 +128,7 @@ export class TeleportViewerElement extends HTMLElement {
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this);
     this.handleResize();
+    this.setupControl();
     this.startLoop();
 
     if (this.hasAttribute("autoconnect") && this.getAttribute("src")) {
@@ -123,6 +139,7 @@ export class TeleportViewerElement extends HTMLElement {
   disconnectedCallback(): void {
     cancelAnimationFrame(this.rafId);
     this.resizeObserver?.disconnect();
+    this.teardownControl();
     this.adapter?.detach();
     this.adapter?.clear();
     this.adapter = null;
@@ -142,7 +159,12 @@ export class TeleportViewerElement extends HTMLElement {
     this.renderer = null;
   }
 
-  attributeChangedCallback(): void {
+  attributeChangedCallback(name: string): void {
+    if (name === "control-model") {
+      // Only meaningful once the renderer exists (after connectedCallback).
+      if (this.renderer) this.setupControl();
+      return;
+    }
     // Re-trigger connect if src changed and autoconnect is on.
     if (this.client) return;
     if (this.hasAttribute("autoconnect") && this.getAttribute("src")) {
@@ -177,6 +199,9 @@ export class TeleportViewerElement extends HTMLElement {
     });
     this.client.onCommand((cmd) => {
       this.applyEnvironment(cmd);
+      if (cmd.kind === CommandPayloadType.SetupInputs) {
+        this.inputReporter.setInputs(cmd);
+      }
       this.dispatchEvent(
         new CustomEvent("command", { detail: cmd, bubbles: true }),
       );
@@ -285,6 +310,7 @@ export class TeleportViewerElement extends HTMLElement {
   }
 
   private handleState(state: ClientState): void {
+    this.streaming = state === "streaming";
     if (this.statusEl) this.statusEl.textContent = state;
     // A single "state" event carries the phase as detail. Earlier versions
     // also dispatched an event named after the state itself, but that
@@ -304,15 +330,80 @@ export class TeleportViewerElement extends HTMLElement {
     this.camera.updateProjectionMatrix();
   }
 
+  /** (Re)build the input hub and control model from the `control-model`
+   *  attribute. Recognised values: "fps" / "freefly" / "first-person" enable
+   *  Model A (free-fly). Anything else (or absent) reverts to OrbitControls and
+   *  captures no device input. */
+  private setupControl(): void {
+    this.teardownControl();
+    const mode = (this.getAttribute("control-model") ?? "").toLowerCase();
+    const canvas = this.shadowRoot?.querySelector("canvas");
+    if (!canvas) return;
+    if (mode === "fps" || mode === "freefly" || mode === "first-person") {
+      this.deviceHub = new DeviceHub()
+        .add(new DesktopInput({ target: canvas as HTMLElement }))
+        .add(new GamepadInput());
+      // Seed the model from the current inspection camera so the view doesn't
+      // jump when control is enabled.
+      const p = this.camera?.position;
+      this.controlModel = new FreeFlyModel({
+        position: p ? [p.x, p.y, p.z] : undefined,
+      });
+      if (this.controls) this.controls.enabled = false;
+    } else {
+      if (this.controls) this.controls.enabled = true;
+    }
+  }
+
+  private teardownControl(): void {
+    this.deviceHub?.dispose();
+    this.deviceHub = null;
+    this.controlModel = null;
+  }
+
   private startLoop(): void {
+    this.lastFrameMs = performance.now();
     const tick = () => {
       this.rafId = requestAnimationFrame(tick);
+      const now = performance.now();
+      // Clamp dt so a backgrounded tab doesn't produce a huge integration step.
+      const dt = Math.min(0.1, Math.max(0, (now - this.lastFrameMs) / 1000));
+      this.lastFrameMs = now;
+      this.driveControl(dt);
       this.controls?.update();
       if (this.renderer && this.scene && this.camera) {
         this.renderer.render(this.scene, this.camera);
       }
     };
     this.rafId = requestAnimationFrame(tick);
+  }
+
+  /** Per-frame input sampling: advance the control model (camera + streamed
+   *  head pose) and report declared inputs. No-op without an active control
+   *  model. */
+  private driveControl(dt: number): void {
+    if (!this.deviceHub) return;
+    const snap = this.deviceHub.sample();
+
+    if (this.controlModel && this.camera) {
+      const out = this.controlModel.update(dt, snap);
+      this.camera.position.set(...out.camera.position);
+      this.camera.quaternion.set(...out.camera.orientation);
+      if (this.streaming && this.client) {
+        this.client.sendUnreliable(
+          buildControllerPoses(
+            { position: out.head.position, orientation: out.head.orientation },
+            [],
+          ),
+        );
+      }
+    }
+
+    if (this.streaming && this.client) {
+      const report = this.inputReporter.report(snap);
+      if (report.states) this.client.sendUnreliable(report.states);
+      if (report.events) this.client.sendUnreliable(report.events);
+    }
   }
 }
 

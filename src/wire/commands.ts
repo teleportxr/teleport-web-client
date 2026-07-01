@@ -67,6 +67,36 @@ export function readVideoConfig(r: BufferReader): VideoConfig {
   };
 }
 
+/** sizeof(avs::AudioConfig) == 17. */
+export interface AudioConfig {
+  codec: number;            // 0=disabled, 1=Opus
+  rtpPayloadType: number;   // dynamic payload type in SDP
+  sampleRateHz: number;     // 48000 for Opus
+  channelCount: number;
+  frameDurationMs: number;  // 10|20|40|60
+  flags: number;            // bit0=FEC, bit1=DTX, bit2=symmetric routing
+  maxInboundStreams: number;
+  selectionPolicy: number;  // 0=All, 1=Fifo, 2=Proximity, 3=ActiveSpeaker
+  proximityRadiusMetres: number;
+  evictionGraceMs: number;
+}
+
+/** sizeof(avs::AudioConfig) == 17. */
+export function readAudioConfig(r: BufferReader): AudioConfig {
+  return {
+    codec: r.u8(),
+    rtpPayloadType: r.u8(),
+    sampleRateHz: r.u32(),
+    channelCount: r.u8(),
+    frameDurationMs: r.u8(),
+    flags: r.u8(),
+    maxInboundStreams: r.u8(),
+    selectionPolicy: r.u8(),
+    proximityRadiusMetres: r.f32(),
+    evictionGraceMs: r.u16(),
+  };
+}
+
 export interface SetupCommand {
   kind: CommandPayloadType.Setup;
   debugStream: number;
@@ -75,6 +105,7 @@ export interface SetupCommand {
   idleConnectionTimeout: number;
   sessionId: bigint;
   videoConfig: VideoConfig;
+  audioConfig: AudioConfig;
   drawDistance: number;
   axesStandard: AxesStandard;
   audioInputEnabled: number;
@@ -85,7 +116,7 @@ export interface SetupCommand {
   backgroundTexture: Uid;
 }
 
-/** sizeof(SetupCommand) == 154 (including 1-byte tag). */
+/** sizeof(SetupCommand) == 171 (including 1-byte tag). */
 export function readSetupCommand(r: BufferReader): SetupCommand {
   return {
     kind: CommandPayloadType.Setup,
@@ -95,6 +126,7 @@ export function readSetupCommand(r: BufferReader): SetupCommand {
     idleConnectionTimeout: r.u32(),
     sessionId: r.u64(),
     videoConfig: readVideoConfig(r),
+    audioConfig: readAudioConfig(r),
     drawDistance: r.f32(),
     axesStandard: r.u8() as AxesStandard,
     audioInputEnabled: r.u8(),
@@ -177,6 +209,20 @@ export interface NodeVisibilityCommand {
   hideNodes: Uid[];
 }
 
+/** Sent from server when the set of audio tracks delivered to this client changes.
+ *  The fixed header is followed by variable-length added/removed entries on the wire. */
+export interface AudioSourceMappingCommand {
+  kind: CommandPayloadType.AudioSourceMapping;
+  addedCount: number;
+  removedCount: number;
+}
+
+/** Sent from server to report user-visible audio state changes for participants. */
+export interface AudioParticipantStateChangeCommand {
+  kind: CommandPayloadType.AudioParticipantStateChange;
+  updateCount: number;
+}
+
 export interface UnknownCommand {
   kind: "unknown";
   tag: CommandPayloadType;
@@ -194,6 +240,8 @@ export type ParsedCommand =
   | SetupInputsCommand
   | AssignNodePosePathCommand
   | NodeVisibilityCommand
+  | AudioSourceMappingCommand
+  | AudioParticipantStateChangeCommand
   | UnknownCommand;
 
 /** Parse the full reliable-channel packet, dispatching on the leading tag byte. */
@@ -224,6 +272,10 @@ export function parseCommand(packet: Uint8Array): ParsedCommand {
       return readAssignNodePosePathCommand(r);
     case CommandPayloadType.NodeVisibility:
       return readNodeVisibilityCommand(r);
+    case CommandPayloadType.AudioSourceMapping:
+      return { kind: CommandPayloadType.AudioSourceMapping, addedCount: r.u16(), removedCount: r.u16() };
+    case CommandPayloadType.AudioParticipantStateChange:
+      return { kind: CommandPayloadType.AudioParticipantStateChange, updateCount: r.u16() };
     default:
       return { kind: "unknown", tag, raw: packet.slice(1) };
   }

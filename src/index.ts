@@ -134,8 +134,11 @@ export {
   type ParsedCommand,
   type SetupCommand,
   type AcknowledgeHandshakeCommand,
+  type AudioConfig,
   type VideoConfig,
 } from "./wire/commands.js";
+
+export { WebRTCAudio, type AudioOutputOptions } from "./audio/output.js";
 
 export {
   buildHandshake,

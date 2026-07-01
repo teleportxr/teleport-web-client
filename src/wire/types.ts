@@ -22,6 +22,8 @@ export enum CommandPayloadType {
   AssignNodePosePath = 14,
   SetupInputs = 15,
   PingForLatency = 16,
+  AudioSourceMapping = 17,
+  AudioParticipantStateChange = 18,
   SetOriginNode = 128,
 }
 
@@ -116,11 +118,11 @@ export enum SignalingState {
   Invalid = "Invalid",
 }
 
-/** Pre-negotiated WebRTC data-channel ids (server side creates these). */
+/** Pre-negotiated WebRTC data-channel ids (server side creates these).
+ *  Note: audio is now carried as a WebRTC media track (Opus/RTP), not a data channel. */
 export const ChannelId = {
   Video: 20,
   VideoTags: 40,
-  AudioServerToClient: 60,
   Geometry: 80,
   Reliable: 100,
   Unreliable: 120,
@@ -132,7 +134,6 @@ export type ChannelIdValue = (typeof ChannelId)[keyof typeof ChannelId];
 export const ChannelLabel = {
   Video: "video",
   VideoTags: "video_tags",
-  AudioServerToClient: "audio_server_to_client",
   Geometry: "geometry_unframed",
   Reliable: "reliable",
   Unreliable: "unreliable",

@@ -18,9 +18,9 @@ import {
   type SetupLightingCommand,
 } from "../src/wire/commands.js";
 
-/** Build a SetupCommand byte-buffer matching sizeof == 154. */
+/** Build a SetupCommand byte-buffer matching sizeof == 171. */
 function makeSetupCommandBytes(): Uint8Array {
-  const w = new BufferWriter(154);
+  const w = new BufferWriter(171);
   w.u8(CommandPayloadType.Setup);
   w.u32(0).u32(0).i32(0).u32(5000).u64(0xdeadbeefn);
   // VideoConfig (89 bytes): 14 u32s + 1 f32 + 1 f32 + ... follows readVideoConfig order
@@ -33,6 +33,9 @@ function makeSetupCommandBytes(): Uint8Array {
   w.u32(2048).i32(0).i32(1).i32(0); // colour_cubemap_size, compose, useCubemap, streamWebcam
   w.u8(VideoCodec.H264);
   w.i32(0).i32(0).i32(0); // shadowmap x,y,size
+  // AudioConfig (17 bytes): codec, payloadType, sampleRateHz, channelCount,
+  // frameDurationMs, flags, maxInboundStreams, selectionPolicy, proximityRadius, evictionGraceMs
+  w.u8(1).u8(111).u32(48000).u8(1).u8(20).u8(3).u8(0).u8(0).f32(0).u16(0);
   // Tail of SetupCommand
   w.f32(50.0); // draw_distance
   w.u8(AxesStandard.GlStyle);
@@ -60,9 +63,9 @@ describe("parseCommand", () => {
     }
   });
 
-  it("decodes a SetupCommand of exactly 154 bytes", () => {
+  it("decodes a SetupCommand of exactly 171 bytes", () => {
     const bytes = makeSetupCommandBytes();
-    expect(bytes.byteLength).toBe(154);
+    expect(bytes.byteLength).toBe(171);
     const cmd = parseCommand(bytes) as SetupCommand;
     expect(cmd.kind).toBe(CommandPayloadType.Setup);
     expect(cmd.idleConnectionTimeout).toBe(5000);
@@ -79,6 +82,32 @@ describe("parseCommand", () => {
     expect(cmd.videoConfig.videoWidth).toBe(1024);
     expect(cmd.videoConfig.videoCodec).toBe(VideoCodec.H264);
     expect(cmd.videoConfig.colourCubemapSize).toBe(2048);
+    expect(cmd.audioConfig.codec).toBe(1);
+    expect(cmd.audioConfig.rtpPayloadType).toBe(111);
+    expect(cmd.audioConfig.sampleRateHz).toBe(48000);
+    expect(cmd.audioConfig.channelCount).toBe(1);
+    expect(cmd.audioConfig.frameDurationMs).toBe(20);
+  });
+
+  it("decodes an AudioSourceMapping header", () => {
+    const w = new BufferWriter();
+    w.u8(CommandPayloadType.AudioSourceMapping).u16(2).u16(1);
+    const cmd = parseCommand(w.toUint8Array());
+    expect(cmd.kind).toBe(CommandPayloadType.AudioSourceMapping);
+    if (cmd.kind === CommandPayloadType.AudioSourceMapping) {
+      expect(cmd.addedCount).toBe(2);
+      expect(cmd.removedCount).toBe(1);
+    }
+  });
+
+  it("decodes an AudioParticipantStateChange header", () => {
+    const w = new BufferWriter();
+    w.u8(CommandPayloadType.AudioParticipantStateChange).u16(3);
+    const cmd = parseCommand(w.toUint8Array());
+    expect(cmd.kind).toBe(CommandPayloadType.AudioParticipantStateChange);
+    if (cmd.kind === CommandPayloadType.AudioParticipantStateChange) {
+      expect(cmd.updateCount).toBe(3);
+    }
   });
 
   it("decodes an AcknowledgeHandshake with appended uids", () => {

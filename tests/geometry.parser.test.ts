@@ -148,6 +148,50 @@ describe("parseGeometryChunk — Node", () => {
     }
   });
 
+  it("decodes an audio emitter component", () => {
+    const packet = chunk((w) => {
+      w.u8(GeometryPayloadType.Node).u64(3n);
+      writeString(w, "speaker");
+      w.vec3(0, 0, 0).vec4(0, 0, 0, 1).vec3(1, 1, 1);
+      w.bool(true).u64(0n).i32(0).u64(0n).u8(1);
+      w.u8(NodeDataType.AudioEmitter);
+      w.u32(17); // audioStreamIndex
+      w.u8(1); // flags: spatialised
+      w.u8(0); // reason: none
+      w.f32(0.75).f32(1.5).f32(50); // gain, min, max
+    });
+    const payload = parseGeometryChunk(packet);
+    expect(payload.kind).toBe(GeometryPayloadType.Node);
+    if (payload.kind === GeometryPayloadType.Node) {
+      expect(payload.component).toBeNull();
+      expect(payload.audioEmitter?.audioStreamIndex).toBe(17);
+      expect(payload.audioEmitter?.spatialised).toBe(true);
+      expect(payload.audioEmitter?.gain).toBeCloseTo(0.75);
+      expect(payload.audioEmitter?.maxDistanceMetres).toBe(50);
+    }
+  });
+
+  it("decodes a node carrying both a mesh and an audio emitter", () => {
+    const packet = chunk((w) => {
+      w.u8(GeometryPayloadType.Node).u64(9n);
+      writeString(w, "avatar");
+      w.vec3(0, 0, 0).vec4(0, 0, 0, 1).vec3(1, 1, 1);
+      w.bool(false).u64(0n).i32(0).u64(0n).u8(2); // 2 components
+      // Mesh component
+      w.u8(NodeDataType.Mesh);
+      w.u64(500n).u64(0n).u16(0).u16(0).u16(0).vec4(0, 0, 0, 0).u64(0n);
+      // Audio emitter component (non-spatial)
+      w.u8(NodeDataType.AudioEmitter);
+      w.u32(21).u8(0).u8(0).f32(1).f32(1).f32(100);
+    });
+    const payload = parseGeometryChunk(packet);
+    if (payload.kind === GeometryPayloadType.Node) {
+      expect(payload.component?.kind).toBe(NodeDataType.Mesh);
+      expect(payload.audioEmitter?.audioStreamIndex).toBe(21);
+      expect(payload.audioEmitter?.spatialised).toBe(false);
+    }
+  });
+
   it("decodes a light component", () => {
     const packet = chunk((w) => {
       w.u8(GeometryPayloadType.Node).u64(2n);

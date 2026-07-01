@@ -36,6 +36,7 @@ import {
 import { ResourceCache } from "./scene/cache.js";
 import { resolveMeshFormat, resolveTextureFormat } from "./scene/loaders.js";
 import { AssetFetcher } from "./http/assets.js";
+import { WebRTCAudio } from "./audio/output.js";
 
 /** Lifecycle phases reported via the `state` event. */
 export type ClientState =
@@ -70,6 +71,8 @@ export class TeleportClient {
    *  their PolicyCallback via avatars.setOnAvatarPolicy(). */
   readonly avatars: AvatarManager;
   state: ClientState = "idle";
+
+  private audio: WebRTCAudio | null = null;
 
   private stateListeners = new Set<Listener<ClientState>>();
   private commandListeners = new Set<Listener<ParsedCommand>>();
@@ -111,6 +114,8 @@ export class TeleportClient {
     }
     this.signaling.close();
     this.peer.close();
+    this.audio?.close();
+    this.audio = null;
     this.assets.clear();
     this.cache.clear();
     this.setState("closed");
@@ -225,6 +230,15 @@ export class TeleportClient {
           this.channelListeners.forEach((l) => l({ key, data }));
         }
       },
+      onTrack: (track, _streams, transceiver) => {
+        // Server-forwarded remote audio (e.g. mic from another participant).
+        // The track's SDP `mid` is the abstract audio stream index that an
+        // AudioEmitter component binds to a scene node (see audio.rst).
+        if (track.kind === "audio" && this.audio) {
+          const streamIndex = parseStreamIndex(transceiver?.mid);
+          this.audio.attachIncomingTrack(track, streamIndex);
+        }
+      },
     });
   }
 
@@ -240,6 +254,18 @@ export class TeleportClient {
     }
     this.cache.put(payload);
     this.payloadListeners.forEach((l) => l(payload));
+
+    // An audio emitter component binds a stream index to this node; forward its
+    // gain/spatialisation to the audio graph (the track may arrive later).
+    if (payload.kind === GeometryPayloadType.Node && payload.audioEmitter && this.audio) {
+      const e = payload.audioEmitter;
+      this.audio.applyEmitter(e.audioStreamIndex, {
+        spatialised: e.spatialised,
+        gain: e.gain,
+        minDistanceMetres: e.minDistanceMetres,
+        maxDistanceMetres: e.maxDistanceMetres,
+      });
+    }
 
     if (payload.kind === GeometryPayloadType.TexturePointer) {
       this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Texture);
@@ -351,14 +377,29 @@ export class TeleportClient {
 
   private dispatchCommand(command: ParsedCommand): void {
     switch (command.kind) {
-      case CommandPayloadType.Setup:
+      case CommandPayloadType.Setup: {
         // Server has sent its SetupCommand — reply with the Handshake on
         // whichever reliable transport is available. Guard against duplicate
         // sends if SetupCommand is re-delivered on a re-handshake.
         if (this.state !== "handshake" && this.state !== "streaming") {
           this.sendInitialHandshake();
         }
+        // Initialise the audio module when the server has media-track audio enabled.
+        if (command.audioConfig.codec !== 0 && !this.audio) {
+          this.audio = new WebRTCAudio({ sampleRate: command.audioConfig.sampleRateHz });
+        }
+        // If the server wants mic input, request capture and add the track to
+        // the peer connection. replaceTrack() works without renegotiation on an
+        // already-negotiated sendonly/sendrecv transceiver.
+        if (command.audioConfig.codec !== 0 && command.audioInputEnabled !== 0) {
+          this.audio!.requestMicTrack().then((track) => {
+            this.peer.addTrack(track);
+          }).catch((err: Error) => {
+            this.errorListeners.forEach((l) => l(err));
+          });
+        }
         break;
+      }
       case CommandPayloadType.AcknowledgeHandshake:
         this.setState("streaming");
         break;
@@ -435,4 +476,13 @@ function synthTexturePayload(
     compression,
     data: body,
   };
+}
+
+/** Parse a transceiver `mid` into an audio stream index. The server encodes the
+ *  index as the decimal `mid` (see audio.rst); returns undefined for a mid that
+ *  is absent or not a non-negative integer. */
+function parseStreamIndex(mid: string | null | undefined): number | undefined {
+  if (mid == null) return undefined;
+  if (!/^[0-9]+$/.test(mid)) return undefined;
+  return Number(mid);
 }

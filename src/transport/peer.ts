@@ -12,6 +12,12 @@ export interface PeerHandlers {
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   onChannel?: (key: ChannelKey, channel: RTCDataChannel) => void;
   onMessage?: (key: ChannelKey, data: ArrayBuffer) => void;
+  /** Fired when a remote media track is received (e.g. server-forwarded audio). */
+  onTrack?: (
+    track: MediaStreamTrack,
+    streams: readonly MediaStream[],
+    transceiver: RTCRtpTransceiver,
+  ) => void;
 }
 
 const LABEL_TO_KEY: Record<string, ChannelKey> = Object.fromEntries(
@@ -39,10 +45,21 @@ export class TeleportPeerConnection {
       this.handlers.onConnectionStateChange?.(this.pc.connectionState);
     });
     this.pc.addEventListener("datachannel", (ev) => this.bind(ev.channel));
+    this.pc.addEventListener("track", (ev) => {
+      this.handlers.onTrack?.(ev.track, ev.streams, ev.transceiver);
+    });
   }
 
   on(handlers: PeerHandlers): void {
     this.handlers = { ...this.handlers, ...handlers };
+  }
+
+  /**
+   * Add a local media track to the peer connection so it is included in the
+   * next SDP answer (for sending the microphone to the server).
+   */
+  addTrack(track: MediaStreamTrack): RTCRtpSender {
+    return this.pc.addTrack(track);
   }
 
   /** Apply the offer SDP from the server, build and return the answer SDP. */

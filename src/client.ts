@@ -232,11 +232,11 @@ export class TeleportClient {
       },
       onTrack: (track, _streams, transceiver) => {
         // Server-forwarded remote audio (e.g. mic from another participant).
-        // The track's SDP `mid` is the abstract audio stream index that an
-        // AudioEmitter component binds to a scene node (see audio.rst).
+        // The track's SDP `mid` is the decimal uid of the emitting scene node
+        // (see audio.rst); it is spatialised at that node's transform.
         if (track.kind === "audio" && this.audio) {
-          const streamIndex = parseStreamIndex(transceiver?.mid);
-          this.audio.attachIncomingTrack(track, streamIndex);
+          const nodeUid = parseNodeUid(transceiver?.mid);
+          this.audio.attachIncomingTrack(track, nodeUid);
         }
       },
     });
@@ -255,16 +255,13 @@ export class TeleportClient {
     this.cache.put(payload);
     this.payloadListeners.forEach((l) => l(payload));
 
-    // An audio emitter component binds a stream index to this node; forward its
-    // gain/spatialisation to the audio graph (the track may arrive later).
-    if (payload.kind === GeometryPayloadType.Node && payload.audioEmitter && this.audio) {
-      const e = payload.audioEmitter;
-      this.audio.applyEmitter(e.audioStreamIndex, {
-        spatialised: e.spatialised,
-        gain: e.gain,
-        minDistanceMetres: e.minDistanceMetres,
-        maxDistanceMetres: e.maxDistanceMetres,
-      });
+    // A remote audio track is spatialised at its emitting node's transform
+    // (track mid = node uid). Update the panner position from the node payload.
+    // NOTE: uses the node's local transform; full world-transform tracking off
+    // the scene graph is a follow-up (see audio.rst).
+    if (payload.kind === GeometryPayloadType.Node && this.audio) {
+      const [px, py, pz] = payload.localTransform.position;
+      this.audio.setEmitterPosition(payload.uid.toString(), px, py, pz);
     }
 
     if (payload.kind === GeometryPayloadType.TexturePointer) {
@@ -478,11 +475,12 @@ function synthTexturePayload(
   };
 }
 
-/** Parse a transceiver `mid` into an audio stream index. The server encodes the
- *  index as the decimal `mid` (see audio.rst); returns undefined for a mid that
- *  is absent or not a non-negative integer. */
-function parseStreamIndex(mid: string | null | undefined): number | undefined {
+/** Parse a transceiver `mid` into the emitting node's uid (decimal string). The
+ *  server sets the track `mid` to the source node uid (see audio.rst); returns
+ *  the string unchanged when it is a non-negative integer, else undefined
+ *  (non-spatial). Kept as a string to avoid losing precision on 64-bit uids. */
+function parseNodeUid(mid: string | null | undefined): string | undefined {
   if (mid == null) return undefined;
   if (!/^[0-9]+$/.test(mid)) return undefined;
-  return Number(mid);
+  return mid;
 }

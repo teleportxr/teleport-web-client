@@ -18,35 +18,30 @@ export interface AudioOutputOptions {
   sampleRate?: number;
 }
 
-/** Emitter parameters bound to a stream index (from an AudioEmitter component). */
-export interface EmitterBinding {
-  spatialised: boolean;
-  gain: number;
-  minDistanceMetres: number;
-  maxDistanceMetres: number;
+/** Audio graph created for one spatialised source node. */
+interface StreamNode {
+  panner: PannerNode;
 }
 
-/** Audio graph created for one bound stream index. */
-interface StreamNode {
-  gain: GainNode;
-  panner: PannerNode | null;
-}
+/** Default panner rolloff (metres). Gain/rolloff are no longer carried on the
+ *  wire; a client-side default is used until a real authoring case appears. */
+const DEFAULT_REF_DISTANCE = 1.0;
+const DEFAULT_MAX_DISTANCE = 100.0;
 
 /**
  * Manages browser-side WebRTC audio: plays back incoming remote tracks via
  * the Web Audio API and provides microphone capture for the server.
  *
- * Remote tracks and audio-emitter components both carry an abstract audio
- * stream index (the track's SDP `mid`); they are correlated here so playback
- * gain and spatialisation follow the emitter that names the stream.
+ * A remote track's SDP `mid` is the decimal uid of the emitting scene node
+ * (see docs/protocol/audio.rst). A track whose mid names a node is spatialised
+ * at that node's transform; a track with no node (mid "0"/absent) plays
+ * non-spatially. The map is therefore keyed by the node uid string.
  */
 export class WebRTCAudio {
   private context: AudioContext | null = null;
   private micStream: MediaStream | null = null;
   private readonly sampleRate: number;
-  private readonly streams = new Map<number, StreamNode>();
-  // Emitter params that arrived (on the geometry channel) before their track.
-  private readonly pendingEmitters = new Map<number, EmitterBinding>();
+  private readonly streams = new Map<string, StreamNode>();
 
   constructor(opts: AudioOutputOptions = {}) {
     this.sampleRate = opts.sampleRate ?? 48000;
@@ -59,32 +54,22 @@ export class WebRTCAudio {
    * event) to the AudioContext for playback.  Creates the AudioContext on first
    * call so that it is created inside a user-gesture context when possible.
    *
-   * When `streamIndex` is supplied (parsed from the track's `mid`), the track is
-   * routed through a gain (and, for spatialised emitters, a panner) node so a
-   * later or earlier AudioEmitter component can control it via applyEmitter().
+   * When `nodeUid` is supplied (the track's `mid` = emitting node uid), the
+   * track is routed through an HRTF panner positioned via setEmitterPosition();
+   * otherwise it plays non-spatially straight to the destination.
    */
-  attachIncomingTrack(track: MediaStreamTrack, streamIndex?: number): void {
+  attachIncomingTrack(track: MediaStreamTrack, nodeUid?: string): void {
     if (!this.context) {
       this.context = new AudioContext({ sampleRate: this.sampleRate });
     }
     const stream = new MediaStream([track]);
     const source = this.context.createMediaStreamSource(stream);
 
-    if (streamIndex !== undefined && streamIndex > 0) {
-      const gain = this.context.createGain();
-      const binding = this.pendingEmitters.get(streamIndex);
-      let panner: PannerNode | null = null;
-      if (binding?.spatialised) {
-        panner = this.makePanner(binding);
-        source.connect(panner);
-        panner.connect(gain);
-      } else {
-        source.connect(gain);
-      }
-      gain.gain.value = binding?.gain ?? 1.0;
-      gain.connect(this.context.destination);
-      this.streams.set(streamIndex, { gain, panner });
-      this.pendingEmitters.delete(streamIndex);
+    if (nodeUid !== undefined && nodeUid !== "0") {
+      const panner = this.makePanner();
+      source.connect(panner);
+      panner.connect(this.context.destination);
+      this.streams.set(nodeUid, { panner });
     } else {
       source.connect(this.context.destination);
     }
@@ -98,40 +83,21 @@ export class WebRTCAudio {
     }
   }
 
-  /**
-   * Apply (or update) an emitter's parameters to the stream it names. Called
-   * when an AudioEmitter component is decoded on the geometry channel. If the
-   * track has not yet arrived the parameters are cached and applied on attach.
-   */
-  applyEmitter(streamIndex: number, binding: EmitterBinding): void {
-    if (streamIndex <= 0) return;
-    const node = this.streams.get(streamIndex);
-    if (!node) {
-      this.pendingEmitters.set(streamIndex, binding);
-      return;
-    }
-    node.gain.gain.value = binding.gain;
-    if (node.panner && binding.spatialised) {
-      node.panner.refDistance = binding.minDistanceMetres;
-      node.panner.maxDistance = binding.maxDistanceMetres;
-    }
-  }
-
-  /** Set the world position of a spatialised emitter's panner. */
-  setEmitterPosition(streamIndex: number, x: number, y: number, z: number): void {
-    const panner = this.streams.get(streamIndex)?.panner;
+  /** Set the world position of a spatialised source node's panner. */
+  setEmitterPosition(nodeUid: string, x: number, y: number, z: number): void {
+    const panner = this.streams.get(nodeUid)?.panner;
     if (!panner) return;
     panner.positionX.value = x;
     panner.positionY.value = y;
     panner.positionZ.value = z;
   }
 
-  private makePanner(binding: EmitterBinding): PannerNode {
+  private makePanner(): PannerNode {
     const panner = this.context!.createPanner();
     panner.panningModel = "HRTF";
     panner.distanceModel = "inverse";
-    panner.refDistance = binding.minDistanceMetres;
-    panner.maxDistance = binding.maxDistanceMetres;
+    panner.refDistance = DEFAULT_REF_DISTANCE;
+    panner.maxDistance = DEFAULT_MAX_DISTANCE;
     return panner;
   }
 
@@ -166,7 +132,6 @@ export class WebRTCAudio {
       this.micStream = null;
     }
     this.streams.clear();
-    this.pendingEmitters.clear();
     if (this.context) {
       this.context.close().catch(() => {/* ignore */});
       this.context = null;

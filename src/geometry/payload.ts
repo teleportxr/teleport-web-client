@@ -42,18 +42,8 @@ export enum NodeDataType {
   SkeletonUnused = 6,
   Link = 7,
   Script = 8,
+  /** Reserved. Audio is bound via the track SDP `mid` = emitting node uid; not carried in the node payload. */
   AudioEmitter = 9,
-}
-
-/** Bit 0 of AudioEmitter.flags. */
-export const AUDIO_EMITTER_SPATIALISED = 1 << 0;
-
-/** Why an emitter with audioStreamIndex === 0 is silent (for UI). */
-export enum AudioSilenceReason {
-  None = 0,
-  OutOfRange = 1,
-  CapExceeded = 2,
-  Muted = 3,
 }
 
 export interface MeshComponent {
@@ -87,25 +77,11 @@ export interface LinkComponent {
   query: string;
 }
 
-export interface AudioEmitterComponentRef {
-  kind: NodeDataType.AudioEmitter;
-  /** Abstract stream index carried on the track `mid`; 0 = present but silent. */
-  audioStreamIndex: number;
-  flags: number;
-  /** Derived from `flags` bit 0. */
-  spatialised: boolean;
-  silenceReason: AudioSilenceReason;
-  gain: number;
-  minDistanceMetres: number;
-  maxDistanceMetres: number;
-}
-
 export type NodeComponent =
   | MeshComponent
   | LightComponent
   | TextCanvasComponentRef
-  | LinkComponent
-  | AudioEmitterComponentRef;
+  | LinkComponent;
 
 export interface NodePayload {
   kind: GeometryPayloadType.Node;
@@ -116,10 +92,8 @@ export interface NodePayload {
   holderClientId: bigint;
   priority: number;
   parentId: Uid;
-  /** First non-audio data component (mesh/light/…), or null. */
+  /** First data component (mesh/light/…), or null. */
   component: NodeComponent | null;
-  /** Audio emitter component, when the node carries one. */
-  audioEmitter: AudioEmitterComponentRef | null;
 }
 
 export interface MeshSubmesh {

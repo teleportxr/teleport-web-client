@@ -20,14 +20,11 @@
 import { BufferReader } from "../wire/reader.js";
 import { GeometryPayloadType, type Uid } from "../wire/types.js";
 import {
-  AUDIO_EMITTER_SPATIALISED,
-  AudioSilenceReason,
   MaterialMode,
   MeshCompressionType,
   NodeDataType,
   TextureCompression,
   type AnimationPayload,
-  type AudioEmitterComponentRef,
   type BoneTrack,
   type FontAtlasPayload,
   type FontMap,
@@ -138,17 +135,10 @@ function parseNodeBody(r: BufferReader, uid: Uid): NodePayload {
   const parentId = r.uid();
   const numComponents = r.u8();
   let component: NodeComponent | null = null;
-  let audioEmitter: AudioEmitterComponentRef | null = null;
-  // A node may carry several components (e.g. a mesh plus an audio emitter).
-  // The first non-audio data component populates `component`; an emitter is
-  // stored separately.
+  // The first data component (mesh/light/…) populates `component`.
   for (let i = 0; i < numComponents; i++) {
     const c = parseNodeComponent(r);
-    if (c.kind === NodeDataType.AudioEmitter) {
-      audioEmitter = c;
-    } else if (component === null) {
-      component = c;
-    }
+    if (component === null) component = c;
   }
   return {
     kind: GeometryPayloadType.Node,
@@ -160,7 +150,6 @@ function parseNodeBody(r: BufferReader, uid: Uid): NodePayload {
     priority,
     parentId,
     component,
-    audioEmitter,
   };
 }
 
@@ -206,24 +195,6 @@ function parseNodeComponent(r: BufferReader): NodeComponent {
       const url = r.string();
       const query = r.string();
       return { kind: NodeDataType.Link, url, query };
-    }
-    case NodeDataType.AudioEmitter: {
-      const audioStreamIndex = r.u32();
-      const flags = r.u8();
-      const silenceReason = r.u8() as AudioSilenceReason;
-      const gain = r.f32();
-      const minDistanceMetres = r.f32();
-      const maxDistanceMetres = r.f32();
-      return {
-        kind: NodeDataType.AudioEmitter,
-        audioStreamIndex,
-        flags,
-        spatialised: (flags & AUDIO_EMITTER_SPATIALISED) !== 0,
-        silenceReason,
-        gain,
-        minDistanceMetres,
-        maxDistanceMetres,
-      };
     }
     default:
       throw new Error(`unsupported node component type: ${dataType}`);

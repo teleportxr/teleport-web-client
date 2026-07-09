@@ -32,6 +32,7 @@ export class DesktopInput implements InputDevice {
   private dx = 0;
   private dy = 0;
   private wheel = 0;
+  private locked = false;
   private disposed = false;
   private readonly handlers: Array<[EventTarget, string, EventListener]> = [];
 
@@ -56,9 +57,13 @@ export class DesktopInput implements InputDevice {
     this.wheel = 0;
   }
 
-  /** True while the pointer is locked to the target (mouse-look active). */
+  /** True while the pointer is locked to the target (mouse-look active).
+   *  Tracked via `pointerlockchange` rather than checking
+   *  `document.pointerLockElement` directly, because the latter returns the
+   *  shadow host (not the inner element) when the lock was requested on a
+   *  node inside an open shadow root. */
   get pointerLocked(): boolean {
-    return this.win.document.pointerLockElement === this.target;
+    return this.locked;
   }
 
   requestPointerLock(): void {
@@ -98,6 +103,16 @@ export class DesktopInput implements InputDevice {
 
     this.on(this.target, "click", () => {
       if (!this.pointerLocked) this.requestPointerLock();
+    });
+    // The lock element is exposed on `document` for top-level targets and on
+    // the owning shadow root for nodes inside one; rather than probing both,
+    // flip a flag from the lifecycle event itself.
+    this.on(doc, "pointerlockchange", () => {
+      const root = this.target.getRootNode() as Document | ShadowRoot;
+      const locked = (root as { pointerLockElement?: Element | null })
+        .pointerLockElement === this.target ||
+        doc.pointerLockElement === this.target;
+      this.locked = locked;
     });
     this.on(this.target, "mousedown", (e) => {
       this.mouseButtons.add(buttonName((e as MouseEvent).button));

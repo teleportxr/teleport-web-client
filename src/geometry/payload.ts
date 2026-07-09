@@ -42,6 +42,8 @@ export enum NodeDataType {
   SkeletonUnused = 6,
   Link = 7,
   Script = 8,
+  /** Reserved. Audio is bound via the track SDP `mid` = emitting node uid; not carried in the node payload. */
+  AudioEmitter = 9,
 }
 
 export interface MeshComponent {
@@ -90,6 +92,7 @@ export interface NodePayload {
   holderClientId: bigint;
   priority: number;
   parentId: Uid;
+  /** First data component (mesh/light/…), or null. */
   component: NodeComponent | null;
 }
 

@@ -135,8 +135,10 @@ function parseNodeBody(r: BufferReader, uid: Uid): NodePayload {
   const parentId = r.uid();
   const numComponents = r.u8();
   let component: NodeComponent | null = null;
-  if (numComponents > 0) {
-    component = parseNodeComponent(r);
+  // The first data component (mesh/light/…) populates `component`.
+  for (let i = 0; i < numComponents; i++) {
+    const c = parseNodeComponent(r);
+    if (component === null) component = c;
   }
   return {
     kind: GeometryPayloadType.Node,

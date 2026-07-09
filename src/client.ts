@@ -36,6 +36,7 @@ import {
 import { ResourceCache } from "./scene/cache.js";
 import { resolveMeshFormat, resolveTextureFormat } from "./scene/loaders.js";
 import { AssetFetcher } from "./http/assets.js";
+import { WebRTCAudio } from "./audio/output.js";
 
 /** Lifecycle phases reported via the `state` event. */
 export type ClientState =
@@ -70,6 +71,8 @@ export class TeleportClient {
    *  their PolicyCallback via avatars.setOnAvatarPolicy(). */
   readonly avatars: AvatarManager;
   state: ClientState = "idle";
+
+  private audio: WebRTCAudio | null = null;
 
   private stateListeners = new Set<Listener<ClientState>>();
   private commandListeners = new Set<Listener<ParsedCommand>>();
@@ -111,6 +114,8 @@ export class TeleportClient {
     }
     this.signaling.close();
     this.peer.close();
+    this.audio?.close();
+    this.audio = null;
     this.assets.clear();
     this.cache.clear();
     this.setState("closed");
@@ -225,6 +230,15 @@ export class TeleportClient {
           this.channelListeners.forEach((l) => l({ key, data }));
         }
       },
+      onTrack: (track, _streams, transceiver) => {
+        // Server-forwarded remote audio (e.g. mic from another participant).
+        // The track's SDP `mid` is the decimal uid of the emitting scene node
+        // (see audio.rst); it is spatialised at that node's transform.
+        if (track.kind === "audio" && this.audio) {
+          const nodeUid = parseNodeUid(transceiver?.mid);
+          this.audio.attachIncomingTrack(track, nodeUid);
+        }
+      },
     });
   }
 
@@ -240,6 +254,15 @@ export class TeleportClient {
     }
     this.cache.put(payload);
     this.payloadListeners.forEach((l) => l(payload));
+
+    // A remote audio track is spatialised at its emitting node's transform
+    // (track mid = node uid). Update the panner position from the node payload.
+    // NOTE: uses the node's local transform; full world-transform tracking off
+    // the scene graph is a follow-up (see audio.rst).
+    if (payload.kind === GeometryPayloadType.Node && this.audio) {
+      const [px, py, pz] = payload.localTransform.position;
+      this.audio.setEmitterPosition(payload.uid.toString(), px, py, pz);
+    }
 
     if (payload.kind === GeometryPayloadType.TexturePointer) {
       this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Texture);
@@ -351,14 +374,29 @@ export class TeleportClient {
 
   private dispatchCommand(command: ParsedCommand): void {
     switch (command.kind) {
-      case CommandPayloadType.Setup:
+      case CommandPayloadType.Setup: {
         // Server has sent its SetupCommand — reply with the Handshake on
         // whichever reliable transport is available. Guard against duplicate
         // sends if SetupCommand is re-delivered on a re-handshake.
         if (this.state !== "handshake" && this.state !== "streaming") {
           this.sendInitialHandshake();
         }
+        // Initialise the audio module when the server has media-track audio enabled.
+        if (command.audioConfig.codec !== 0 && !this.audio) {
+          this.audio = new WebRTCAudio({ sampleRate: command.audioConfig.sampleRateHz });
+        }
+        // If the server wants mic input, request capture and add the track to
+        // the peer connection. replaceTrack() works without renegotiation on an
+        // already-negotiated sendonly/sendrecv transceiver.
+        if (command.audioConfig.codec !== 0 && command.audioInputEnabled !== 0) {
+          this.audio!.requestMicTrack().then((track) => {
+            this.peer.addTrack(track);
+          }).catch((err: Error) => {
+            this.errorListeners.forEach((l) => l(err));
+          });
+        }
         break;
+      }
       case CommandPayloadType.AcknowledgeHandshake:
         this.setState("streaming");
         break;
@@ -435,4 +473,14 @@ function synthTexturePayload(
     compression,
     data: body,
   };
+}
+
+/** Parse a transceiver `mid` into the emitting node's uid (decimal string). The
+ *  server sets the track `mid` to the source node uid (see audio.rst); returns
+ *  the string unchanged when it is a non-negative integer, else undefined
+ *  (non-spatial). Kept as a string to avoid losing precision on 64-bit uids. */
+function parseNodeUid(mid: string | null | undefined): string | undefined {
+  if (mid == null) return undefined;
+  if (!/^[0-9]+$/.test(mid)) return undefined;
+  return mid;
 }

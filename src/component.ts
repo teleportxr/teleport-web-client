@@ -370,7 +370,10 @@ export class TeleportViewerElement extends HTMLElement {
       const dt = Math.min(0.1, Math.max(0, (now - this.lastFrameMs) / 1000));
       this.lastFrameMs = now;
       this.driveControl(dt);
-      this.controls?.update();
+      // OrbitControls.update() always re-aims the camera at its target, even
+      // when `enabled` is false — that flag only gates input. Skip it while a
+      // control model owns the camera, or it would clobber the model's pose.
+      if (!this.controlModel) this.controls?.update();
       if (this.renderer && this.scene && this.camera) {
         this.renderer.render(this.scene, this.camera);
       }

@@ -46,7 +46,11 @@ export class TeleportPeerConnection {
     });
     this.pc.addEventListener("datachannel", (ev) => this.bind(ev.channel));
     this.pc.addEventListener("track", (ev) => {
+      console.log("[peer] track event", ev.track.kind, "mid=", ev.transceiver?.mid);
       this.handlers.onTrack?.(ev.track, ev.streams, ev.transceiver);
+    });
+    this.pc.addEventListener("signalingstatechange", () => {
+      console.log("[peer] signalingState ->", this.pc.signalingState);
     });
   }
 
@@ -60,6 +64,16 @@ export class TeleportPeerConnection {
    */
   addTrack(track: MediaStreamTrack): RTCRtpSender {
     return this.pc.addTrack(track);
+  }
+
+  /**
+   * Apply a server-supplied STUN/TURN server list to the peer connection via
+   * setConfiguration(), so ICE gathering for the upcoming offer/answer uses it.
+   * Called before the offer arrives (see client.ts's onIceServers handler),
+   * so this always lands ahead of ICE gathering starting for this session.
+   */
+  setIceServers(iceServers: RTCIceServer[]): void {
+    this.pc.setConfiguration({ ...this.pc.getConfiguration(), iceServers });
   }
 
   /** Apply the offer SDP from the server, build and return the answer SDP. */
@@ -120,6 +134,7 @@ export class TeleportPeerConnection {
 
   private bind(channel: RTCDataChannel): void {
     const key = LABEL_TO_KEY[channel.label] as ChannelKey | undefined;
+    console.log("[peer] datachannel event, label=", channel.label, "key=", key, "readyState=", channel.readyState);
     if (!key) {
       // Unknown channel — close it so the server is aware.
       channel.close();
@@ -128,6 +143,7 @@ export class TeleportPeerConnection {
     channel.binaryType = "arraybuffer";
     this.channels[key] = channel;
     channel.addEventListener("open", () => {
+      console.log("[peer] channel open:", key);
       this.handlers.onChannel?.(key, channel);
     });
     channel.addEventListener("message", (ev) => {

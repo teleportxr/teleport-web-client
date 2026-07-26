@@ -61,6 +61,7 @@ export class WebRTCAudio {
   attachIncomingTrack(track: MediaStreamTrack, nodeUid?: string): void {
     if (!this.context) {
       this.context = new AudioContext({ sampleRate: this.sampleRate });
+      console.log("[audio] AudioContext created, state=", this.context.state);
     }
     const stream = new MediaStream([track]);
     const source = this.context.createMediaStreamSource(stream);
@@ -73,12 +74,16 @@ export class WebRTCAudio {
     } else {
       source.connect(this.context.destination);
     }
+    console.log("[audio] attached incoming track, nodeUid=", nodeUid, "context.state=", this.context.state);
 
     // Resume the context if it was suspended (autoplay policy).
     if (this.context.state === "suspended") {
-      this.context.resume().catch(() => {
+      this.context.resume().then(() => {
+        console.log("[audio] context.resume() succeeded, state=", this.context?.state);
+      }).catch((err) => {
         // The browser may still block it until the next user gesture;
         // audio will start automatically once the context is resumed.
+        console.warn("[audio] context.resume() failed, still suspended until a user gesture:", err);
       });
     }
   }

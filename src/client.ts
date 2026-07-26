@@ -176,7 +176,11 @@ export class TeleportClient {
       onConnectResponse: () => {
         this.setState("negotiating");
       },
+      onIceServers: (iceServers) => {
+        this.peer.setIceServers(iceServers);
+      },
       onOffer: async (sdp) => {
+        console.log("[client] onOffer, sdp has m=audio:", sdp.includes("m=audio"));
         try {
           const answer = await this.peer.acceptOffer(sdp);
           this.signaling.sendAnswer(answer);
@@ -234,6 +238,7 @@ export class TeleportClient {
         // Server-forwarded remote audio (e.g. mic from another participant).
         // The track's SDP `mid` is the decimal uid of the emitting scene node
         // (see audio.rst); it is spatialised at that node's transform.
+        console.log("[client] onTrack", track.kind, "audio manager ready:", !!this.audio, "mid=", transceiver?.mid);
         if (track.kind === "audio" && this.audio) {
           const nodeUid = parseNodeUid(transceiver?.mid);
           this.audio.attachIncomingTrack(track, nodeUid);

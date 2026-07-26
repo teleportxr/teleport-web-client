@@ -5,11 +5,17 @@
 //   client -> server: {"teleport-signal-type":"connect","content":{"clientID":<u64>}}
 //   server -> client: {"teleport-signal-type":"connect-response",
 //                       "content":{"clientID":<u64>,"serverID":<u64>}}
+//   server -> client: {"teleport-signal-type":"ice-servers","iceServers":[...]}
 //   server -> client: {"teleport-signal-type":"offer","sdp":"..."}
 //   client -> server: {"teleport-signal-type":"answer","sdp":"..."}
 //   either:           {"teleport-signal-type":"candidate",
 //                       "candidate":"...","mid":"...","mlineindex":<int>}
 //   client -> server: {"teleport-signal-type":"disconnect"}
+//
+// "ice-servers" is sent once, before the offer, carrying the same STUN/TURN
+// server list (standard RTCIceServer shape) the server itself uses — see
+// docs/protocol/signaling.rst. This lets the server be the single source of
+// truth for TURN credentials instead of hardcoding/duplicating them client-side.
 //
 // The `connect` envelope carries a free-form `capabilities` object so
 // each side can advertise optional protocol features (e.g. avatar
@@ -40,6 +46,7 @@ export type SignalingMessage =
       "teleport-signal-type": "connect-response";
       content: { clientID: string | number; serverID: string | number };
     }
+  | { "teleport-signal-type": "ice-servers"; iceServers: RTCIceServer[] }
   | { "teleport-signal-type": "offer"; sdp: string }
   | { "teleport-signal-type": "answer"; sdp: string }
   | {
@@ -52,6 +59,8 @@ export type SignalingMessage =
 
 export interface SignalingHandlers {
   onConnectResponse?: (clientId: bigint, serverId: bigint) => void;
+  /** Server-supplied STUN/TURN server list, delivered once before the offer. */
+  onIceServers?: (iceServers: RTCIceServer[]) => void;
   onOffer?: (sdp: string) => void;
   onCandidate?: (
     candidate: string,
@@ -233,6 +242,9 @@ export class SignalingClient {
         this.handlers.onConnectResponse?.(this.clientId, this.serverId);
         break;
       }
+      case "ice-servers":
+        this.handlers.onIceServers?.(msg.iceServers);
+        break;
       case "offer":
         this.handlers.onOffer?.(msg.sdp);
         break;

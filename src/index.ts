@@ -20,11 +20,9 @@ export {
   decodeCapabilities,
   encodeCapabilities,
   encodeAvatarOffer,
-  encodePeerAvatarFailed,
   parseAvatarPolicy,
   parseAvatarResult,
   parseAvatarRevoke,
-  parsePeerAvatar,
   type AvatarDeclared,
   type AvatarOffer,
   type AvatarPolicy,
@@ -33,10 +31,9 @@ export {
   type AvatarRequirements,
   type AvatarResult,
   type AvatarRevoke,
-  type PeerAvatar,
-  type PeerAvatarFailed,
   type SignalingCapabilities,
 } from "./protocol/avatars.js";
+export { redactProof, redactUrl } from "./log/redact.js";
 export {
   TeleportPeerConnection,
   type ChannelKey,

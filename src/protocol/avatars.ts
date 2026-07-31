@@ -7,35 +7,32 @@
 // losslessly; uids are represented as `string` on the wire and parsed
 // to `bigint` in JS-land.
 
+// Every message here concerns this client's own avatar. There is
+// deliberately no peer-facing avatar message: another client's avatar
+// arrives as an ordinary node carrying a mesh pointer, through the
+// geometry pipeline, and this client is never told it is an avatar
+// (plans/avatars_plan.md §2.2).
 export const AVATAR_SIGNAL_TYPES = {
   POLICY: "avatar-policy",
   OFFER: "avatar-offer",
   RESULT: "avatar-result",
   REVOKE: "avatar-revoke",
-  PEER_AVATAR: "peer-avatar",
-  PEER_AVATAR_FAILED: "peer-avatar-failed",
 } as const;
 
 // SignalingCapabilities -------------------------------------------------
-// Free-form capability bag advertised on the `connect` envelope. Unknown
-// keys MUST be ignored on read; only first-class flags are written.
+// Free-form capability bag advertised on the `connect` envelope. It is a
+// general signaling-level extension point with no keys defined at
+// present — avatars need none, since relay is the default and requires
+// no negotiation. Unknown keys are ignored on read and dropped on write.
 
-export interface SignalingCapabilities {
-  /** Client can fetch peer avatars directly from their host (relay mode). */
-  avatar_relay: boolean;
+export type SignalingCapabilities = Record<string, never>;
+
+export function decodeCapabilities(_raw: unknown): SignalingCapabilities {
+  return {};
 }
 
-export function decodeCapabilities(raw: unknown): SignalingCapabilities {
-  const out: SignalingCapabilities = { avatar_relay: false };
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const r = raw as Record<string, unknown>;
-    if (typeof r.avatar_relay === "boolean") out.avatar_relay = r.avatar_relay;
-  }
-  return out;
-}
-
-export function encodeCapabilities(c: Partial<SignalingCapabilities>): SignalingCapabilities {
-  return { avatar_relay: !!c.avatar_relay };
+export function encodeCapabilities(_c: Partial<SignalingCapabilities>): SignalingCapabilities {
+  return {};
 }
 
 // Avatar messages -------------------------------------------------------
@@ -86,6 +83,9 @@ export interface AvatarOffer {
   content_hash?: string;
   declared?: AvatarDeclared;
   proof?: AvatarProofOffer;
+  /** Defaults to true. False asks the server not to hand this url to other
+   *  clients, forcing it to re-host the asset instead. Worth exposing to
+   *  the user when the url carries a token. */
   allow_relay?: boolean;
 }
 
@@ -94,27 +94,15 @@ export interface AvatarResult {
   status: "accepted" | "rejected" | "pending";
   node_uid: bigint;
   using_default: boolean;
-  delivery: "import" | "relay";
+  /** "relay" (the default) means peers were given our own url; "import"
+   *  means the server re-hosted the asset. Informational — it says nothing
+   *  about any other client's avatar. */
+  delivery: "relay" | "import";
   reasons: string[];
 }
 
 export interface AvatarRevoke {
   policy_id: bigint;
-  reason: string;
-}
-
-export interface PeerAvatar {
-  peer_client_id: bigint;
-  peer_node_uid: bigint;
-  url?: string;
-  content_hash?: string;
-  format?: string;
-  proof?: AvatarProofOffer;
-  revoked: boolean;
-}
-
-export interface PeerAvatarFailed {
-  peer_node_uid: bigint;
   reason: string;
 }
 
@@ -163,29 +151,11 @@ export function parseAvatarResult(j: any): AvatarResult {
     status: (j?.status as AvatarResult["status"]) ?? "rejected",
     node_uid: toBig(j?.node_uid),
     using_default: !!j?.using_default,
-    delivery: (j?.delivery as AvatarResult["delivery"]) ?? "import",
+    delivery: (j?.delivery as AvatarResult["delivery"]) ?? "relay",
     reasons: Array.isArray(j?.reasons) ? [...j.reasons] : [],
   };
 }
 
 export function parseAvatarRevoke(j: any): AvatarRevoke {
   return { policy_id: toBig(j?.policy_id), reason: String(j?.reason ?? "") };
-}
-
-export function parsePeerAvatar(j: any): PeerAvatar {
-  const out: PeerAvatar = {
-    peer_client_id: toBig(j?.peer_client_id),
-    peer_node_uid: toBig(j?.peer_node_uid),
-    revoked: !!j?.revoked,
-  };
-  if (j?.url != null) out.url = String(j.url);
-  if (j?.content_hash != null) out.content_hash = String(j.content_hash);
-  if (j?.format != null) out.format = String(j.format);
-  if (j?.proof && typeof j.proof === "object")
-    out.proof = { scheme: String(j.proof.scheme ?? ""), value: String(j.proof.value ?? "") };
-  return out;
-}
-
-export function encodePeerAvatarFailed(f: PeerAvatarFailed): Record<string, unknown> {
-  return { peer_node_uid: fromBig(f.peer_node_uid), reason: f.reason };
 }

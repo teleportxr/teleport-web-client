@@ -125,12 +125,13 @@ export class SignalingClient {
   }
 
   /**
-   * Session-level capabilities advertised on the next `connect`. Defaults
-   * to all-true for the browser client — the web client can fetch peer
-   * avatars directly (CORS permitting), so relay mode is on by default.
-   * Host applications may override this before calling `sendConnect`.
+   * Session-level capabilities advertised on the next `connect`. A general
+   * extension point with no keys defined at present; avatars need none,
+   * since an avatar arrives as an ordinary mesh pointer that every client
+   * can already fetch. Host applications may set keys here before calling
+   * `sendConnect`; servers ignore ones they do not know.
    */
-  capabilities: SignalingCapabilities = { avatar_relay: true };
+  capabilities: SignalingCapabilities = {};
 
   /** Send the initial connect request. clientId 0n requests a fresh id. */
   sendConnect(clientId: bigint = 0n): void {

@@ -35,6 +35,7 @@ import {
 } from "./geometry/payload.js";
 import { ResourceCache } from "./scene/cache.js";
 import { resolveMeshFormat, resolveTextureFormat } from "./scene/loaders.js";
+import type { DecodedAnimation } from "./scene/loaders.js";
 import { AssetFetcher } from "./http/assets.js";
 import { WebRTCAudio } from "./audio/output.js";
 
@@ -57,6 +58,13 @@ export interface TeleportClientOptions {
   handshake?: Partial<HandshakeOptions>;
   /** Override of the HTTP fetcher used for TexturePointer / MeshPointer URLs. */
   assets?: AssetFetcher;
+  /** Decoder for animation clips named by AnimationPointer. Without one, clips are
+   *  acknowledged (so the server stops resending) but never played.
+   *
+   *  Typically `DefaultMeshDecoder.decodeAnimation`, bound. Kept an option rather than
+   *  a hard dependency so this class stays transport-only and free of a runtime
+   *  three.js import. */
+  animationDecoder?: (bytes: Uint8Array) => Promise<DecodedAnimation>;
 }
 
 type Listener<T> = (value: T) => void;
@@ -81,7 +89,13 @@ export class TeleportClient {
     Listener<{ key: ChannelKey; data: ArrayBuffer }>
   >();
   private errorListeners = new Set<Listener<Error>>();
+  private animationListeners = new Set<
+    (uid: Uid, decoded: DecodedAnimation) => void
+  >();
   private pingT0Ms = 0;
+  /** `SetupCommand.startTimestampUtcUnixUs`: the datum this session's clock counts from.
+   *  Zero until the setup command arrives. */
+  private sessionDatumUnixUs = 0n;
   private receivedBatch: Uid[] = [];
   private receivedFlushHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -142,6 +156,28 @@ export class TeleportClient {
   onError(listener: Listener<Error>): () => void {
     this.errorListeners.add(listener);
     return () => this.errorListeners.delete(listener);
+  }
+  /** This session's clock: microseconds since the setup command's datum.
+   *
+   *  This is the clock every server timestamp is expressed in. Anything comparing
+   *  against `ApplyAnimation.timestampUs` or `MovementUpdate.serverTimeUs` must use it
+   *  rather than a wall-clock time — mixing the two puts the value ~1.8e15 µs out, far
+   *  enough that a 32-bit float has no fractional precision left at all.
+   *
+   *  Returns 0 before the setup command has arrived. */
+  sessionTimeUs(): bigint {
+    if (this.sessionDatumUnixUs === 0n) return 0n;
+    return BigInt(Math.floor(Date.now() * 1000)) - this.sessionDatumUnixUs;
+  }
+
+  /** An animation clip named by an AnimationPointer has been fetched and decoded.
+   *  Fires before the resource is acknowledged, so a listener that registers the clip
+   *  synchronously is ready by the time the server considers it delivered. */
+  onAnimationClip(
+    listener: (uid: Uid, decoded: DecodedAnimation) => void,
+  ): () => void {
+    this.animationListeners.add(listener);
+    return () => this.animationListeners.delete(listener);
   }
 
   /** Send an arbitrary client message on the reliable channel. Falls back
@@ -277,6 +313,10 @@ export class TeleportClient {
       this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Mesh);
       return;
     }
+    if (payload.kind === GeometryPayloadType.AnimationPointer) {
+      this.fetchAnimation(payload.uid, payload.url);
+      return;
+    }
     if (payload.kind === GeometryPayloadType.RemoveNodes ||
         payload.kind === "unknown") {
       return;
@@ -323,6 +363,32 @@ export class TeleportClient {
         }
         this.cache.put(payload);
         this.payloadListeners.forEach((l) => l(payload));
+        this.queueReceived(uid);
+      })
+      .catch((err) => {
+        this.errorListeners.forEach((l) => l(err as Error));
+        this.sendReliable(buildResourceLost([uid]));
+      });
+  }
+
+  /** Fetch and decode an animation clip named by an AnimationPointer.
+   *
+   *  Acknowledged only once the clip is decoded and registered, not when the bytes
+   *  land: the server takes the acknowledgement as "ready to be played", and naming a
+   *  clip the client cannot yet use means the state is dropped with nothing to retry it. */
+  private fetchAnimation(uid: Uid, url: string): void {
+    const decoder = this.options.animationDecoder;
+    if (!decoder) {
+      // No decoder configured: acknowledge so the server stops resending, and let
+      // any state naming this clip simply not play.
+      this.queueReceived(uid);
+      return;
+    }
+    this.assets.get(url)
+      .then((asset) => decoder(asset.bytes))
+      .then((decoded) => {
+        if (!decoded.clips.length) throw new Error(`no clips in ${url}`);
+        this.animationListeners.forEach((l) => l(uid, decoded));
         this.queueReceived(uid);
       })
       .catch((err) => {
@@ -380,6 +446,10 @@ export class TeleportClient {
   private dispatchCommand(command: ParsedCommand): void {
     switch (command.kind) {
       case CommandPayloadType.Setup: {
+        // The datum for this session's clock. Every timestamp the server sends —
+        // ApplyAnimation.timestampUs, MovementUpdate.serverTimeUs — is measured from
+        // here, so it has to be captured before any of them can be interpreted.
+        this.sessionDatumUnixUs = command.startTimestampUtcUnixUs;
         // Server has sent its SetupCommand — reply with the Handshake on
         // whichever reliable transport is available. Guard against duplicate
         // sends if SetupCommand is re-delivered on a re-handshake.

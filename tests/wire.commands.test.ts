@@ -155,3 +155,54 @@ describe("parseCommand", () => {
     }
   });
 });
+
+describe("ApplyAnimationCommand", () => {
+  // The C++ client drops any packet of a different size, so the layout is not
+  // negotiable: tag(1) layer(4) timestamp(8) node(8) cache(8) anim(8) time(4)
+  // speed(4) loop(1). See docs/protocol/service/server_to_client.rst.
+  function makeBytes(): Uint8Array {
+    const w = new BufferWriter();
+    w.u8(CommandPayloadType.ApplyNodeAnimation);
+    w.i32(0); // animLayer
+    w.i64(254921178n); // timestampUs, session time
+    w.uid(22n); // nodeId
+    w.uid(0n); // cacheId: "the cache containing nodeId"
+    w.uid(24n); // animationId
+    w.f32(0.625); // animTimeAtTimestamp — exact in binary32
+    w.f32(1.25); // speedUnitsPerSecond
+    w.bool(true); // loop
+    return w.toUint8Array();
+  }
+
+  it("is exactly 46 bytes on the wire", () => {
+    expect(makeBytes().byteLength).toBe(46);
+  });
+
+  it("decodes every field", () => {
+    const cmd = parseCommand(makeBytes());
+    expect(cmd.kind).toBe(CommandPayloadType.ApplyNodeAnimation);
+    if (cmd.kind !== CommandPayloadType.ApplyNodeAnimation) return;
+    expect(cmd.animLayer).toBe(0);
+    expect(cmd.timestampUs).toBe(254921178n);
+    expect(cmd.nodeId).toBe(22n);
+    expect(cmd.cacheId).toBe(0n);
+    expect(cmd.animationId).toBe(24n);
+    expect(cmd.animTimeAtTimestamp).toBeCloseTo(0.625);
+    expect(cmd.speedUnitsPerSecond).toBeCloseTo(1.25);
+    expect(cmd.loop).toBe(true);
+  });
+
+  it("reads timestampUs as signed", () => {
+    // A client whose clock datum runs ahead of the server's legitimately sees a
+    // negative session time; reading it unsigned would put it ~584,000 years out.
+    const w = new BufferWriter();
+    w.u8(CommandPayloadType.ApplyNodeAnimation);
+    w.i32(0);
+    w.i64(-5000n);
+    w.uid(1n).uid(0n).uid(2n);
+    w.f32(0).f32(1).bool(false);
+    const cmd = parseCommand(w.toUint8Array());
+    if (cmd.kind !== CommandPayloadType.ApplyNodeAnimation) throw new Error("kind");
+    expect(cmd.timestampUs).toBe(-5000n);
+  });
+});

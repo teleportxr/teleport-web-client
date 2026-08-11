@@ -105,6 +105,7 @@ export {
 } from "./http/assets.js";
 export { ResourceCache, type PendingPointer } from "./scene/cache.js";
 export { SceneAdapter, type SceneAdapterOptions } from "./scene/adapter.js";
+export { AnimationController } from "./scene/animation.js";
 export {
   DefaultMeshDecoder,
   DefaultTextureDecoder,
@@ -114,6 +115,7 @@ export {
   isPng,
   resolveMeshFormat,
   resolveTextureFormat,
+  type DecodedAnimation,
   type DecodedMesh,
   type MeshDecoder,
   type MeshFormatHint,

@@ -24,13 +24,39 @@ export interface DecodedMesh {
    *  return it alongside the geometry instead, for the adapter to apply. */
   transform?: THREE.Matrix4;
   name?: string;
+  /** Set instead of `geometry` when the source file is skinned: the whole
+   *  glTF scene, bones and `SkinnedMesh` intact.
+   *
+   *  A skinned mesh cannot survive the flattening the other branch does. Baking
+   *  `matrixWorld` into each primitive and dropping the node hierarchy throws away
+   *  the bones the skin indices refer to, leaving a body frozen in its bind pose —
+   *  which renders correctly right up until something tries to animate it. The
+   *  adapter clones this with `SkeletonUtils.clone` so each instance gets its own
+   *  skeleton to pose. */
+  scene?: THREE.Object3D;
+  /** Clips packaged inside the same file. Rarely used: clips normally arrive
+   *  separately as AnimationPointers, which is what lets one rig share them. */
+  animations?: THREE.AnimationClip[];
 }
 
 export interface MeshDecoder {
   /** Decode a single submesh buffer. Returns one or more renderable
    *  primitives (a Draco buffer yields one; a glTF binary may yield many). */
   decode(bytes: Uint8Array): Promise<DecodedMesh[]>;
+  /** Decode an animation file (.vrma / .glb) into its clips and the rig they were
+   *  authored against. Both are needed: a clip only drives a skeleton whose bones its
+   *  tracks name, so where the avatar's rig differs the clip has to be retargeted from
+   *  its own source rig onto the target. Returning the clips alone would leave nothing
+   *  to retarget *from*. */
+  decodeAnimation?(bytes: Uint8Array): Promise<DecodedAnimation>;
   dispose(): void;
+}
+
+/** Clips plus the rig they were authored against. */
+export interface DecodedAnimation {
+  clips: THREE.AnimationClip[];
+  /** The clip file's own skeleton, as `SkeletonUtils.retargetClip`'s `source`. */
+  source: THREE.Object3D;
 }
 
 export interface TextureDecoder {
@@ -48,6 +74,11 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 // KTX2 magic: «KTX 20»\r\n\x1A\n
 const KTX2_MAGIC = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/** Placeholder for the `geometry` field of a scene-carrying DecodedMesh, which has
+ *  no single geometry of its own. Shared and never disposed: the adapter mounts the
+ *  scene instead and never reads this. */
+const EMPTY_GEOMETRY = new THREE.BufferGeometry();
 
 function startsWith(bytes: Uint8Array, magic: number[]): boolean {
   if (bytes.byteLength < magic.length) return false;
@@ -197,6 +228,13 @@ export class DefaultMeshDecoder implements MeshDecoder {
     return [{ geometry: geo }];
   }
 
+  async decodeAnimation(bytes: Uint8Array): Promise<DecodedAnimation> {
+    if (!isGltfBinary(bytes)) {
+      return { clips: [], source: new THREE.Object3D() };
+    }
+    return decodeGltfAnimations(this.gltf, bytes);
+  }
+
   dispose(): void {
     this.draco.dispose();
   }
@@ -276,6 +314,24 @@ function decodeGltf(
       (gltf: GLTF) => {
         const out: DecodedMesh[] = [];
         gltf.scene.updateMatrixWorld(true);
+        // A skinned file keeps its scene graph. Flattening below would bake each
+        // primitive's world matrix and drop the bone hierarchy the skin indices point
+        // at, so the mesh would render in its bind pose and could never be posed again.
+        let skinned = false;
+        gltf.scene.traverse((obj) => {
+          if ((obj as THREE.SkinnedMesh).isSkinnedMesh) skinned = true;
+        });
+        if (skinned) {
+          resolve([
+            {
+              geometry: EMPTY_GEOMETRY,
+              scene: gltf.scene,
+              animations: gltf.animations ?? [],
+              name: gltf.scene.name,
+            },
+          ]);
+          return;
+        }
         gltf.scene.traverse((obj) => {
           const mesh = obj as THREE.Mesh;
           if (!mesh.isMesh) return;
@@ -296,6 +352,26 @@ function decodeGltf(
           });
         });
         resolve(out);
+      },
+      (err: unknown) => reject(err as Error),
+    );
+  });
+}
+
+function decodeGltfAnimations(
+  loader: GLTFLoader,
+  bytes: Uint8Array,
+): Promise<DecodedAnimation> {
+  return new Promise((resolve, reject) => {
+    const ab = toStandaloneArrayBuffer(bytes);
+    loader.parse(
+      ab,
+      "",
+      (gltf: GLTF) => {
+        // The scene is kept, not discarded: it is the rig the clips were authored
+        // against, and retargeting cannot happen without it.
+        gltf.scene.updateMatrixWorld(true);
+        resolve({ clips: gltf.animations ?? [], source: gltf.scene });
       },
       (err: unknown) => reject(err as Error),
     );

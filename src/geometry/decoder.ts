@@ -18,7 +18,7 @@
 // validation against the protocol's stated little-endian convention.
 
 import { BufferReader } from "../wire/reader.js";
-import { GeometryPayloadType, type Uid } from "../wire/types.js";
+import { AxesStandard, GeometryPayloadType, type Uid } from "../wire/types.js";
 import {
   MaterialMode,
   MeshCompressionType,
@@ -43,6 +43,7 @@ import {
   type TexturePayload,
   type TexturePointerPayload,
   type MeshPointerPayload,
+  type AnimationPointerPayload,
   type Transform,
 } from "./payload.js";
 
@@ -108,6 +109,8 @@ function dispatchBody(
       return parseTexturePointerBody(r, uid);
     case GeometryPayloadType.MeshPointer:
       return parseMeshPointerBody(r, uid);
+    case GeometryPayloadType.AnimationPointer:
+      return parseAnimationPointerBody(r, uid);
     default:
       return {
         kind: "unknown",
@@ -395,18 +398,40 @@ function parseTextCanvasBody(r: BufferReader, uid: Uid): TextCanvasPayload {
 }
 
 function parseTexturePointerBody(r: BufferReader, uid: Uid): TexturePointerPayload {
+  // Leading byte of every pointer body: a placeholder for texture interpretation.
+  const axesStandard = r.u8() as AxesStandard;
   return {
     kind: GeometryPayloadType.TexturePointer,
     uid,
+    axesStandard,
     url: r.string(),
   };
 }
 
+function parseAnimationPointerBody(
+  r: BufferReader,
+  uid: Uid,
+): AnimationPointerPayload {
+  const axesStandard = r.u8() as AxesStandard;
+  const url = r.string();
+  return {
+    kind: GeometryPayloadType.AnimationPointer,
+    uid,
+    url,
+    axesStandard,
+  };
+}
+
 function parseMeshPointerBody(r: BufferReader, uid: Uid): MeshPointerPayload {
+  // Leading byte of every pointer body: the axes standard the asset is authored in.
+  // NotInitialized means "the same as the server's scene".
+  const axesStandard = r.u8() as AxesStandard;
+  const url = r.string();
   return {
     kind: GeometryPayloadType.MeshPointer,
     uid,
-    url: r.string(),
+    url,
+    axesStandard,
   };
 }
 

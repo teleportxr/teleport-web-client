@@ -124,6 +124,12 @@ export class AvatarManager {
   get lastOffer(): AvatarOffer | null { return this._lastOffer; }
   get lastResult(): AvatarResult | null { return this._lastResult; }
 
+  /** Session uid of this client's avatar root node in the server scene
+   *  (from the last avatar-result), or 0n before one arrives. The local
+   *  view may use it to recognise — and e.g. hide in first person — its
+   *  own avatar in the streamed geometry. */
+  get avatarNodeUid(): bigint { return this._lastResult?.node_uid ?? 0n; }
+
   private handlePolicy(content: unknown): void {
     const policy = parseAvatarPolicy(content ?? {});
     this._currentPolicy = policy;

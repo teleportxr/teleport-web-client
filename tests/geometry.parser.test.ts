@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { BufferWriter } from "../src/wire/writer.js";
-import { GeometryPayloadType } from "../src/wire/types.js";
+import { AxesStandard, GeometryPayloadType } from "../src/wire/types.js";
 import { parseGeometryBody, parseGeometryChunk } from "../src/geometry/decoder.js";
 import {
   MaterialMode,
@@ -71,12 +71,14 @@ describe("parseGeometryChunk — TexturePointer / MeshPointer", () => {
   it("decodes a TexturePointer URL", () => {
     const packet = chunk((w) => {
       w.u8(GeometryPayloadType.TexturePointer).u64(78n);
+      w.u8(AxesStandard.NotInitialized); // placeholder byte, leads every pointer body
       writeString(w, "/a/b.ktx2");
     });
     const payload = parseGeometryChunk(packet);
     expect(payload.kind).toBe(GeometryPayloadType.TexturePointer);
     if (payload.kind === GeometryPayloadType.TexturePointer) {
       expect(payload.uid).toBe(78n);
+      expect(payload.axesStandard).toBe(AxesStandard.NotInitialized);
       expect(payload.url).toBe("/a/b.ktx2");
     }
   });
@@ -84,12 +86,60 @@ describe("parseGeometryChunk — TexturePointer / MeshPointer", () => {
   it("decodes a MeshPointer URL", () => {
     const packet = chunk((w) => {
       w.u8(GeometryPayloadType.MeshPointer).u64(42n);
+      w.u8(AxesStandard.NotInitialized);
       writeString(w, "https://cdn.example/m.draco");
     });
     const payload = parseGeometryChunk(packet);
     expect(payload.kind).toBe(GeometryPayloadType.MeshPointer);
     if (payload.kind === GeometryPayloadType.MeshPointer) {
       expect(payload.url).toBe("https://cdn.example/m.draco");
+    }
+  });
+
+  it("reads the axes standard leading a MeshPointer body", () => {
+    // glTF is always Y-up right-handed, whatever the server's scene uses, so an asset like
+    // this has to say so or the client imports it tipped on its side.
+    const packet = chunk((w) => {
+      w.u8(GeometryPayloadType.MeshPointer).u64(42n);
+      w.u8(AxesStandard.GlStyle);
+      writeString(w, "/generic_avatar.vrm");
+    });
+    const payload = parseGeometryChunk(packet);
+    expect(payload.kind).toBe(GeometryPayloadType.MeshPointer);
+    if (payload.kind === GeometryPayloadType.MeshPointer) {
+      expect(payload.url).toBe("/generic_avatar.vrm");
+      expect(payload.axesStandard).toBe(AxesStandard.GlStyle);
+    }
+  });
+
+  it("decodes an AnimationPointer URL", () => {
+    // Same body layout as MeshPointer. A .vrma is glTF, so it declares GlStyle whatever
+    // frame the scene around it uses.
+    const packet = chunk((w) => {
+      w.u8(GeometryPayloadType.AnimationPointer).u64(24n);
+      w.u8(AxesStandard.GlStyle);
+      writeString(w, "/avatar_anim/Walking.vrma");
+    });
+    const payload = parseGeometryChunk(packet);
+    expect(payload.kind).toBe(GeometryPayloadType.AnimationPointer);
+    if (payload.kind === GeometryPayloadType.AnimationPointer) {
+      expect(payload.uid).toBe(24n);
+      expect(payload.url).toBe("/avatar_anim/Walking.vrma");
+      expect(payload.axesStandard).toBe(AxesStandard.GlStyle);
+    }
+  });
+
+  it("treats a MeshPointer with NotInitialized axes as the server's own", () => {
+    // An asset authored in the server's own frame declares nothing, so the byte is zero.
+    const packet = chunk((w) => {
+      w.u8(GeometryPayloadType.MeshPointer).u64(42n);
+      w.u8(AxesStandard.NotInitialized);
+      writeString(w, "/legacy.glb");
+    });
+    const payload = parseGeometryChunk(packet);
+    expect(payload.kind).toBe(GeometryPayloadType.MeshPointer);
+    if (payload.kind === GeometryPayloadType.MeshPointer) {
+      expect(payload.axesStandard).toBe(AxesStandard.NotInitialized);
     }
   });
 });

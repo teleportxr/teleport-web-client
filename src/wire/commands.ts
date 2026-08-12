@@ -209,6 +209,61 @@ export interface NodeVisibilityCommand {
   hideNodes: Uid[];
 }
 
+/** One node's transform at a moment in server-session time. Mirrors
+ *  `teleport::core::MovementUpdate`: packed, 85 bytes, little-endian. */
+export interface MovementUpdate {
+  /** Microseconds since `SetupCommand.startTimestampUtcUnixUs`. */
+  serverTimeUs: bigint;
+  /** False means the transform is local to the node's parent, which is what a node
+   *  parented under this client's origin requires. Servers send parent-local. */
+  isGlobal: boolean;
+  nodeId: Uid;
+  position: [number, number, number];
+  /** Quaternion (x, y, z, w). */
+  rotation: [number, number, number, number];
+  scale: [number, number, number];
+  /** Metres per second, for extrapolation to predicted display time. Servers are
+   *  expected to send zero; nothing here extrapolates. */
+  velocity: [number, number, number];
+  angularVelocityAxis: [number, number, number];
+  /** Radians per second about `angularVelocityAxis`. */
+  angularVelocityAngle: number;
+}
+
+/** Sent from server to move nodes it has already streamed. This is the only way a node
+ *  moves after creation: the Node payload carries a transform once, at creation. */
+export interface UpdateNodeMovementCommand {
+  kind: CommandPayloadType.UpdateNodeMovement;
+  updates: MovementUpdate[];
+}
+
+/** Sent from server to set what a node's skeleton should be playing.
+ *
+ *  Exactly 46 bytes on the wire. Sent on a change of state, not per frame, so a client
+ *  that drops one stays in the previous animation until the next change.
+ *
+ *  `timestampUs` doubles as the blend control: dated slightly ahead of now, the client
+ *  cross-fades to the new state over the intervening interval; dated "now", it snaps.
+ *  `animTimeAtTimestamp` is where in the new clip to be at that instant, which is what
+ *  carries the phase across a change of clip so the footfall does not jump. */
+export interface ApplyAnimationCommand {
+  kind: CommandPayloadType.ApplyNodeAnimation;
+  /** Only layer 0 is implemented, by either reference client. */
+  animLayer: number;
+  /** Server-session time, microseconds since the setup command's datum — the same
+   *  clock as `MovementUpdate.serverTimeUs`, never a wall-clock time. */
+  timestampUs: bigint;
+  nodeId: Uid;
+  /** Which cache holds the clip; 0 means "the cache containing nodeId". */
+  cacheId: Uid;
+  animationId: Uid;
+  /** Seconds into the clip at `timestampUs`. */
+  animTimeAtTimestamp: number;
+  /** Playback-rate multiplier from then on. Not a ground speed. */
+  speedUnitsPerSecond: number;
+  loop: boolean;
+}
+
 /** Sent from server when the set of audio tracks delivered to this client changes.
  *  The fixed header is followed by variable-length added/removed entries on the wire. */
 export interface AudioSourceMappingCommand {
@@ -240,6 +295,8 @@ export type ParsedCommand =
   | SetupInputsCommand
   | AssignNodePosePathCommand
   | NodeVisibilityCommand
+  | UpdateNodeMovementCommand
+  | ApplyAnimationCommand
   | AudioSourceMappingCommand
   | AudioParticipantStateChangeCommand
   | UnknownCommand;
@@ -272,6 +329,10 @@ export function parseCommand(packet: Uint8Array): ParsedCommand {
       return readAssignNodePosePathCommand(r);
     case CommandPayloadType.NodeVisibility:
       return readNodeVisibilityCommand(r);
+    case CommandPayloadType.ApplyNodeAnimation:
+      return readApplyAnimationCommand(r);
+    case CommandPayloadType.UpdateNodeMovement:
+      return readUpdateNodeMovementCommand(r);
     case CommandPayloadType.AudioSourceMapping:
       return { kind: CommandPayloadType.AudioSourceMapping, addedCount: r.u16(), removedCount: r.u16() };
     case CommandPayloadType.AudioParticipantStateChange:
@@ -341,6 +402,49 @@ function readAssignNodePosePathCommand(
   const pathLength = r.u16();
   const regexPath = pathLength > 0 ? r.utf8(pathLength) : "";
   return { kind: CommandPayloadType.AssignNodePosePath, nodeId, regexPath };
+}
+
+/** Parse `UpdateNodeMovementCommand`: a `size_t` count followed by that many 85-byte
+ *  MovementUpdate records. Field order on the wire is position, rotation, scale, velocity,
+ *  angularVelocityAxis, angularVelocityAngle. */
+export function readUpdateNodeMovementCommand(
+  r: BufferReader,
+): UpdateNodeMovementCommand {
+  const count = Number(r.u64());
+  const updates: MovementUpdate[] = [];
+  for (let i = 0; i < count; i++) {
+    updates.push({
+      serverTimeUs: r.i64(),
+      isGlobal: r.bool(),
+      nodeId: r.uid(),
+      position: r.vec3(),
+      rotation: r.vec4(),
+      scale: r.vec3(),
+      velocity: r.vec3(),
+      angularVelocityAxis: r.vec3(),
+      angularVelocityAngle: r.f32(),
+    });
+  }
+  return { kind: CommandPayloadType.UpdateNodeMovement, updates };
+}
+
+export function readApplyAnimationCommand(
+  r: BufferReader,
+): ApplyAnimationCommand {
+  // Field order is fixed by the C++ struct's packed layout; see
+  // docs/protocol/service/server_to_client.rst. timestampUs is signed: a client whose
+  // clock datum runs ahead of the server's legitimately sees a negative value.
+  return {
+    kind: CommandPayloadType.ApplyNodeAnimation,
+    animLayer: r.i32(),
+    timestampUs: r.i64(),
+    nodeId: r.uid(),
+    cacheId: r.uid(),
+    animationId: r.uid(),
+    animTimeAtTimestamp: r.f32(),
+    speedUnitsPerSecond: r.f32(),
+    loop: r.bool(),
+  };
 }
 
 function readNodeVisibilityCommand(r: BufferReader): NodeVisibilityCommand {

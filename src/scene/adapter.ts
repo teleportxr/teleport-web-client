@@ -14,6 +14,7 @@
 //   * TextCanvas/Link:  not yet rendered.
 
 import * as THREE from "three";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { GeometryPayloadType, type Uid } from "../wire/types.js";
 import {
   NodeDataType,
@@ -22,8 +23,10 @@ import {
   type MeshComponent,
   type NodePayload,
 } from "../geometry/payload.js";
+import type { MovementUpdate } from "../wire/commands.js";
 import type { ResourceCache } from "./cache.js";
 import type { ResourceResolver } from "./resources.js";
+import type { AnimationController } from "./animation.js";
 
 interface MountedNode {
   uid: Uid;
@@ -34,18 +37,25 @@ interface MountedNode {
    *  mesh populates abort if the node was re-applied or removed. */
   visualGeneration: number;
   parentId: Uid;
+  /** The cloned skinned scene, when this node's mesh was a skinned file. This is
+   *  what an AnimationMixer is bound to; null for ordinary static meshes. */
+  skinnedRoot?: THREE.Object3D | null;
 }
 
 export interface SceneAdapterOptions {
   /** When provided, Mesh components decode through this resolver and the
    *  placeholder cube is no longer used. */
   resolver?: ResourceResolver;
+  /** When provided, skinned meshes are registered with it so streamed
+   *  ApplyAnimation states can pose them. */
+  animation?: AnimationController;
 }
 
 export class SceneAdapter {
   readonly root: THREE.Group;
   private readonly cache: ResourceCache;
   private readonly resolver: ResourceResolver | null;
+  private readonly animation: AnimationController | null;
   private readonly mounted = new Map<bigint, MountedNode>();
   /** Nodes whose parent has not yet been seen — re-parented when it lands. */
   private readonly orphans = new Map<bigint, Set<bigint>>();
@@ -60,9 +70,11 @@ export class SceneAdapter {
     if (optsOrRoot instanceof THREE.Group) {
       this.root = optsOrRoot;
       this.resolver = null;
+      this.animation = null;
     } else {
       this.root = new THREE.Group();
       this.resolver = optsOrRoot?.resolver ?? null;
+      this.animation = optsOrRoot?.animation ?? null;
     }
     this.root.name = "teleport-root";
   }
@@ -85,6 +97,51 @@ export class SceneAdapter {
     }
     this.mounted.clear();
     this.orphans.clear();
+  }
+
+  /** Apply a server-sent movement update to an already-mounted node.
+   *
+   *  This is the only way a node moves after creation — the Node payload carries a
+   *  transform once, when the node is created, and is not re-sent as it moves.
+   *
+   *  An update for a node that has not arrived yet is dropped rather than buffered: the
+   *  server sends these continuously for anything that is moving, so the next one along
+   *  carries fresher state than anything worth holding on to. A stale queued transform
+   *  applied at mount time would put the node briefly in the wrong place.
+   *
+   *  `isGlobal` is honoured only to the extent of ignoring it: THREE positions objects
+   *  relative to their parent, which is what `isGlobal === false` asks for, and servers
+   *  send parent-local. A global update would need the parent's inverse world matrix. */
+  applyMovement(update: MovementUpdate): boolean {
+    const entry = this.mounted.get(update.nodeId);
+    if (!entry) return false;
+    entry.object.position.set(
+      update.position[0],
+      update.position[1],
+      update.position[2],
+    );
+    entry.object.quaternion.set(
+      update.rotation[0],
+      update.rotation[1],
+      update.rotation[2],
+      update.rotation[3],
+    );
+    // A zero scale would collapse the node, and is far more likely to mean "the server did
+    // not fill this in" than to be intended.
+    if (update.scale[0] !== 0 || update.scale[1] !== 0 || update.scale[2] !== 0) {
+      entry.object.scale.set(update.scale[0], update.scale[1], update.scale[2]);
+    }
+    return true;
+  }
+
+  /** Apply every update in an UpdateNodeMovementCommand. Returns how many landed on a
+   *  node this client actually holds. */
+  applyMovements(updates: readonly MovementUpdate[]): number {
+    let applied = 0;
+    for (const u of updates) {
+      if (this.applyMovement(u)) applied++;
+    }
+    return applied;
   }
 
   private onPayload(payload: GeometryPayload): void {
@@ -176,6 +233,22 @@ export class SceneAdapter {
       for (const m of protocolMaterials) m.dispose();
       return;
     }
+    // A skinned source arrives as its whole scene graph rather than a list of
+    // primitives. Clone it with SkeletonUtils so this instance gets bones and a
+    // Skeleton of its own — THREE.Object3D.clone() would copy the meshes but leave
+    // them bound to the original's skeleton, so every instance would move together.
+    const skinnedSource = decoded.find((dm) => dm.scene);
+    if (skinnedSource?.scene) {
+      const instance = SkeletonUtils.clone(skinnedSource.scene);
+      group.add(instance);
+      entry.skinnedRoot = instance;
+      this.animation?.onSkinnedRootMounted(
+        entry.uid,
+        instance,
+        skinnedSource.humanoidBones,
+      );
+      return;
+    }
     for (let i = 0; i < decoded.length; i++) {
       const dm = decoded[i];
       // Prefer the material the decoder baked in (e.g. from a glTF source);
@@ -235,6 +308,8 @@ export class SceneAdapter {
     entry.visualGeneration += 1;
     entry.object.removeFromParent();
     disposeRecursive(entry.object);
+    // The mixer holds the rig alive and would keep posing a detached skeleton.
+    this.animation?.removeNode(uid);
     this.mounted.delete(uid);
     for (const [parentId, set] of this.orphans) {
       set.delete(uid);

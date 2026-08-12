@@ -15,7 +15,9 @@ export enum CommandPayloadType {
   UpdateNodeEnabledState = 7,
   SetNodeHighlighted = 8,
   ApplyNodeAnimation = 9,
-  UpdateNodeAnimationControlX = 10,
+  /** Reserved: never had a struct or a handler. Held so the ids after it stay put. */
+  Reserved_AnimationControl = 10,
+  /** Do not send: the C++ client has no handler. Use ApplyAnimation.speedUnitsPerSecond. */
   SetNodeAnimationSpeed = 11,
   SetupLighting = 12,
   UpdateNodeStructure = 13,
@@ -80,6 +82,8 @@ export enum GeometryPayloadType {
   MeshPointer = 11,
   MaterialPointer = 12,
   RemoveNodes = 13,
+  /** URL of an out-of-band Animation, same body layout as MeshPointer. Not yet parsed. */
+  AnimationPointer = 14,
 }
 
 /** avs::VideoPayloadType (uint8) — first byte of video-channel chunks. */

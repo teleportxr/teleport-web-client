@@ -24,13 +24,56 @@ export interface DecodedMesh {
    *  return it alongside the geometry instead, for the adapter to apply. */
   transform?: THREE.Matrix4;
   name?: string;
+  /** Set instead of `geometry` when the source file is skinned: the whole
+   *  glTF scene, bones and `SkinnedMesh` intact.
+   *
+   *  A skinned mesh cannot survive the flattening the other branch does. Baking
+   *  `matrixWorld` into each primitive and dropping the node hierarchy throws away
+   *  the bones the skin indices refer to, leaving a body frozen in its bind pose —
+   *  which renders correctly right up until something tries to animate it. The
+   *  adapter clones this with `SkeletonUtils.clone` so each instance gets its own
+   *  skeleton to pose. */
+  scene?: THREE.Object3D;
+  /** Clips packaged inside the same file. Rarely used: clips normally arrive
+   *  separately as AnimationPointers, which is what lets one rig share them. */
+  animations?: THREE.AnimationClip[];
+  /** VRM humanoid role -> the name of the object filling it, e.g.
+   *  `{ hips: "Avatar_Hips", leftUpperArm: "Avatar_LeftArm" }`.
+   *
+   *  This is the only thing tying a VRM animation to a VRM body. A `.vrma` names its
+   *  tracks by humanoid role (`hips.quaternion`); an avatar names its bones however its
+   *  author did (`Avatar_Hips`, Mixamo-style here). Nothing in the glTF itself connects
+   *  the two — the correspondence lives in the VRM extension, so it is read out here and
+   *  carried alongside the rig for the animation layer to rename tracks with. */
+  humanoidBones?: Record<string, string>;
 }
 
 export interface MeshDecoder {
   /** Decode a single submesh buffer. Returns one or more renderable
    *  primitives (a Draco buffer yields one; a glTF binary may yield many). */
   decode(bytes: Uint8Array): Promise<DecodedMesh[]>;
+  /** Decode an animation file (.vrma / .glb) into its clips and the rig they were
+   *  authored against. Both are needed: a clip only drives a skeleton whose bones its
+   *  tracks name, so where the avatar's rig differs the clip has to be retargeted from
+   *  its own source rig onto the target. Returning the clips alone would leave nothing
+   *  to retarget *from*. */
+  decodeAnimation?(bytes: Uint8Array): Promise<DecodedAnimation>;
   dispose(): void;
+}
+
+/** Clips plus the rig they were authored against. */
+export interface DecodedAnimation {
+  clips: THREE.AnimationClip[];
+  /** The clip file's own skeleton, as `SkeletonUtils.retargetClip`'s `source`. */
+  source: THREE.Object3D;
+  /** VRM humanoid role -> the name of the node filling it, when the file declares it.
+   *
+   *  A VRM animation's nodes are conventionally *named* for the role they play
+   *  (`hips`, `leftUpperArm`), and reading the names is what the 1.0-beta files in use
+   *  here allow. But that convention is not the contract: `VRMC_vrm_animation` states
+   *  the mapping explicitly as node indices, and a file is free to name its nodes
+   *  anything. Prefer the declaration wherever it exists. */
+  humanoidBones?: Record<string, string>;
 }
 
 export interface TextureDecoder {
@@ -48,6 +91,11 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
 // KTX2 magic: «KTX 20»\r\n\x1A\n
 const KTX2_MAGIC = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/** Placeholder for the `geometry` field of a scene-carrying DecodedMesh, which has
+ *  no single geometry of its own. Shared and never disposed: the adapter mounts the
+ *  scene instead and never reads this. */
+const EMPTY_GEOMETRY = new THREE.BufferGeometry();
 
 function startsWith(bytes: Uint8Array, magic: number[]): boolean {
   if (bytes.byteLength < magic.length) return false;
@@ -197,6 +245,13 @@ export class DefaultMeshDecoder implements MeshDecoder {
     return [{ geometry: geo }];
   }
 
+  async decodeAnimation(bytes: Uint8Array): Promise<DecodedAnimation> {
+    if (!isGltfBinary(bytes)) {
+      return { clips: [], source: new THREE.Object3D() };
+    }
+    return decodeGltfAnimations(this.gltf, bytes);
+  }
+
   dispose(): void {
     this.draco.dispose();
   }
@@ -276,6 +331,25 @@ function decodeGltf(
       (gltf: GLTF) => {
         const out: DecodedMesh[] = [];
         gltf.scene.updateMatrixWorld(true);
+        // A skinned file keeps its scene graph. Flattening below would bake each
+        // primitive's world matrix and drop the bone hierarchy the skin indices point
+        // at, so the mesh would render in its bind pose and could never be posed again.
+        let skinned = false;
+        gltf.scene.traverse((obj) => {
+          if ((obj as THREE.SkinnedMesh).isSkinnedMesh) skinned = true;
+        });
+        if (skinned) {
+          resolve([
+            {
+              geometry: EMPTY_GEOMETRY,
+              scene: gltf.scene,
+              animations: gltf.animations ?? [],
+              humanoidBones: readVrmHumanoidBones(gltf),
+              name: gltf.scene.name,
+            },
+          ]);
+          return;
+        }
         gltf.scene.traverse((obj) => {
           const mesh = obj as THREE.Mesh;
           if (!mesh.isMesh) return;
@@ -296,6 +370,110 @@ function decodeGltf(
           });
         });
         resolve(out);
+      },
+      (err: unknown) => reject(err as Error),
+    );
+  });
+}
+
+/** Read the VRM humanoid map out of a loaded glTF, as `role -> node name`.
+ *
+ *  Both spec generations are handled because they disagree on shape: VRM 0.x keeps an
+ *  array of `{bone, node}`, VRM 1.0 an object keyed by role. `node` is an index into
+ *  `json.nodes`, whose `name` is what three gives the corresponding Object3D.
+ *
+ *  Returns undefined for a non-VRM file, which is not an error — an ordinary skinned
+ *  glTF simply has no humanoid roles, and its clips are expected to name its bones. */
+function readVrmHumanoidBones(gltf: GLTF): Record<string, string> | undefined {
+  const json = (gltf.parser as { json?: GltfJson }).json;
+  const humanoid =
+    json?.extensions?.VRM?.humanoid ?? json?.extensions?.VRMC_vrm?.humanoid;
+  const humanBones = humanoid?.humanBones;
+  if (!humanBones || !json?.nodes) return undefined;
+
+  const out: Record<string, string> = {};
+  const add = (role: string | undefined, nodeIndex: number | undefined) => {
+    if (!role || nodeIndex === undefined) return;
+    const name = json.nodes?.[nodeIndex]?.name;
+    if (name) out[role] = name;
+  };
+  if (Array.isArray(humanBones)) {
+    for (const hb of humanBones) add(hb.bone, hb.node);
+  } else {
+    for (const [role, hb] of Object.entries(humanBones)) add(role, hb?.node);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Read the humanoid map a VRM *animation* declares, as `role -> node name`.
+ *
+ *  Two layouts are in the wild and both are handled, because the released spec moved the
+ *  node reference: 1.0 states `humanBones.<role>.node`, while the 1.0-beta files this
+ *  client is used with instead carry inline sampler references and no node index at all.
+ *  For those, fall back to the naming convention — a beta file's nodes are named for
+ *  their roles, which is the only handle it offers.
+ *
+ *  Returns undefined for a file that is not a VRM animation. */
+function readVrmAnimationHumanoidBones(
+  gltf: GLTF,
+): Record<string, string> | undefined {
+  const json = (gltf.parser as { json?: GltfJson }).json;
+  const humanBones = json?.extensions?.VRMC_vrm_animation?.humanoid?.humanBones;
+  if (!humanBones || !json?.nodes) return undefined;
+
+  const out: Record<string, string> = {};
+  for (const [role, entry] of Object.entries(humanBones)) {
+    const nodeIndex = entry?.node;
+    if (nodeIndex === undefined) continue;
+    const name = json.nodes[nodeIndex]?.name;
+    if (name) out[role] = name;
+  }
+  if (Object.keys(out).length) return out;
+
+  // No node indices: a 1.0-beta file. Its roles are its node names, so accept any node
+  // whose name matches a role the extension lists.
+  for (const role of Object.keys(humanBones)) {
+    if (json.nodes.some((n) => n.name === role)) out[role] = role;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The slice of glTF JSON this file reads. GLTFLoader types `parser.json` loosely. */
+interface GltfJson {
+  nodes?: { name?: string }[];
+  extensions?: {
+    VRM?: { humanoid?: VrmHumanoid };
+    VRMC_vrm?: { humanoid?: VrmHumanoid };
+    VRMC_vrm_animation?: {
+      humanoid?: { humanBones?: Record<string, { node?: number } | undefined> };
+    };
+  };
+}
+
+interface VrmHumanoid {
+  humanBones?:
+    | { bone?: string; node?: number }[]
+    | Record<string, { node?: number } | undefined>;
+}
+
+function decodeGltfAnimations(
+  loader: GLTFLoader,
+  bytes: Uint8Array,
+): Promise<DecodedAnimation> {
+  return new Promise((resolve, reject) => {
+    const ab = toStandaloneArrayBuffer(bytes);
+    loader.parse(
+      ab,
+      "",
+      (gltf: GLTF) => {
+        // The scene is kept, not discarded: it is the rig the clips were authored
+        // against, and retargeting cannot happen without it.
+        gltf.scene.updateMatrixWorld(true);
+        resolve({
+          clips: gltf.animations ?? [],
+          source: gltf.scene,
+          humanoidBones: readVrmAnimationHumanoidBones(gltf),
+        });
       },
       (err: unknown) => reject(err as Error),
     );

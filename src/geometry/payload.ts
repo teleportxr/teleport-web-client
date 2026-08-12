@@ -1,7 +1,7 @@
 // Decoded shapes for every GeometryPayloadType on the geometry channel.
 // Mirrors Teleport/docs/protocol/geometry_payload.rst.
 
-import { GeometryPayloadType, type Uid } from "../wire/types.js";
+import { AxesStandard, GeometryPayloadType, type Uid } from "../wire/types.js";
 
 export type Vec3 = [number, number, number];
 export type Vec4 = [number, number, number, number];
@@ -227,6 +227,10 @@ export interface TextCanvasPayload {
 export interface TexturePointerPayload {
   kind: GeometryPayloadType.TexturePointer;
   uid: Uid;
+  /** Leading byte of every pointer body. A texture has no geometric frame, so this is
+   *  a placeholder for future texture interpretation, currently always
+   *  `AxesStandard.NotInitialized`. */
+  axesStandard: AxesStandard;
   url: string;
 }
 
@@ -234,6 +238,25 @@ export interface MeshPointerPayload {
   kind: GeometryPayloadType.MeshPointer;
   uid: Uid;
   url: string;
+  /** The axes standard the asset behind the url is authored in.
+   *
+   *  `AxesStandard.NotInitialized` means "the same as the server's scene", which is the
+   *  common case. It is set where the asset disagrees: a glTF-family file (.glb/.vrm) is
+   *  Y-up right-handed (`GlStyle`) whatever the scene around it uses. */
+  axesStandard: AxesStandard;
+}
+
+/** URL of an out-of-band animation clip. Same body layout as MeshPointer.
+ *
+ *  Clips arrive this way rather than inline because one clip drives many rigs: a
+ *  .vrma is fetched once and retargeted per avatar. */
+export interface AnimationPointerPayload {
+  kind: GeometryPayloadType.AnimationPointer;
+  uid: Uid;
+  url: string;
+  /** The frame the clip file itself is authored in. A .vrma is glTF, so `GlStyle`
+   *  whatever the scene around it uses. */
+  axesStandard: AxesStandard;
 }
 
 export interface RemoveNodesPayload {
@@ -259,5 +282,6 @@ export type GeometryPayload =
   | TextCanvasPayload
   | TexturePointerPayload
   | MeshPointerPayload
+  | AnimationPointerPayload
   | RemoveNodesPayload
   | UnknownPayload;

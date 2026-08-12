@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TeleportClient, type ClientState } from "./client.js";
 import { SceneAdapter } from "./scene/adapter.js";
+import { AnimationController } from "./scene/animation.js";
 import {
   DefaultMeshDecoder,
   DefaultTextureDecoder,
@@ -57,6 +58,7 @@ export class TeleportViewerElement extends HTMLElement {
    *  keyed by uid. Null before connect. */
   resolver: ResourceResolver | null = null;
   private adapter: SceneAdapter | null = null;
+  private animation: AnimationController | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
   private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
@@ -143,6 +145,9 @@ export class TeleportViewerElement extends HTMLElement {
     this.adapter?.detach();
     this.adapter?.clear();
     this.adapter = null;
+    // Mixers hold their rigs alive; dropping the controller drops them with it.
+    this.animation?.dispose();
+    this.animation = null;
     this.client?.close();
     this.client = null;
     this.resolver = null;
@@ -178,7 +183,16 @@ export class TeleportViewerElement extends HTMLElement {
     if (!src) throw new Error("<teleport-viewer> requires a `src` attribute");
     if (this.client) return;
     if (!this.scene) throw new Error("<teleport-viewer> not yet connected to DOM");
-    this.client = new TeleportClient({ url: src });
+    const meshDecoder = this.meshDecoder;
+    this.client = new TeleportClient({
+      url: src,
+      // Bound so AnimationPointer clips decode through the same GLTFLoader the
+      // meshes use, sharing its Draco decoder. Optional on the interface: a custom
+      // decoder without it leaves clips acknowledged but unplayed rather than throwing.
+      animationDecoder: meshDecoder?.decodeAnimation
+        ? (bytes) => meshDecoder.decodeAnimation!(bytes)
+        : undefined,
+    });
     this.resolver =
       this.meshDecoder && this.textureDecoder
         ? new ResourceResolver(this.client.cache, {
@@ -186,8 +200,18 @@ export class TeleportViewerElement extends HTMLElement {
             textureDecoder: this.textureDecoder,
           })
         : null;
+    this.animation = new AnimationController();
+    this.client.onAnimationClip((uid, decoded) => {
+      this.animation?.setClip(
+        uid,
+        decoded.clips[0],
+        decoded.source,
+        decoded.humanoidBones,
+      );
+    });
     this.adapter = new SceneAdapter(this.client.cache, {
       resolver: this.resolver ?? undefined,
+      animation: this.animation,
     });
     this.scene.add(this.adapter.root);
     this.adapter.attach();
@@ -201,6 +225,14 @@ export class TeleportViewerElement extends HTMLElement {
       this.applyEnvironment(cmd);
       if (cmd.kind === CommandPayloadType.SetupInputs) {
         this.inputReporter.setInputs(cmd);
+      } else if (cmd.kind === CommandPayloadType.UpdateNodeMovement) {
+        // Server-driven motion: nodes the server moves on our behalf, such as another
+        // participant's avatar or our own follower.
+        this.adapter?.applyMovements(cmd.updates);
+      } else if (cmd.kind === CommandPayloadType.ApplyNodeAnimation) {
+        // What that node's skeleton should be playing. Sent on a change of state, not
+        // per frame, so this is recorded and kept until the next one arrives.
+        this.animation?.apply(cmd);
       }
       this.dispatchEvent(
         new CustomEvent("command", { detail: cmd, bubbles: true }),
@@ -370,6 +402,11 @@ export class TeleportViewerElement extends HTMLElement {
       const dt = Math.min(0.1, Math.max(0, (now - this.lastFrameMs) / 1000));
       this.lastFrameMs = now;
       this.driveControl(dt);
+      // Advance skeletons on the session clock, not on `dt` or wall time: the states
+      // being played are timestamped in it, and the controller works out its own delta.
+      if (this.animation && this.client) {
+        this.animation.update(this.client.sessionTimeUs());
+      }
       // OrbitControls.update() always re-aims the camera at its target, even
       // when `enabled` is false — that flag only gates input. Skip it while a
       // control model owns the camera, or it would clobber the model's pose.

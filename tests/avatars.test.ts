@@ -9,31 +9,50 @@ import {
   encodeAvatarOffer,
   parseAvatarResult,
   parseAvatarRevoke,
-  parsePeerAvatar,
-  encodePeerAvatarFailed,
+  AVATAR_SIGNAL_TYPES,
   type AvatarOffer,
-  type PeerAvatarFailed,
 } from "../src/protocol/avatars.js";
+import * as avatarsModule from "../src/protocol/avatars.js";
 import { SignalingClient } from "../src/transport/signaling.js";
 
 describe("SignalingCapabilities", () => {
-  it("decodes missing / empty / wrong-type input to all-false defaults", () => {
-    expect(decodeCapabilities(undefined)).toEqual({ avatar_relay: false });
-    expect(decodeCapabilities(null)).toEqual({ avatar_relay: false });
-    expect(decodeCapabilities({})).toEqual({ avatar_relay: false });
-    expect(decodeCapabilities([1, 2, 3])).toEqual({ avatar_relay: false });
-    expect(decodeCapabilities({ avatar_relay: "yes" })).toEqual({ avatar_relay: false });
+  // No capabilities are defined: the bag is an extension point only.
+  // Avatars deliberately need none — an avatar arrives as an ordinary mesh
+  // pointer, which every client can already fetch.
+  it("decodes any input to an empty bag", () => {
+    expect(decodeCapabilities(undefined)).toEqual({});
+    expect(decodeCapabilities(null)).toEqual({});
+    expect(decodeCapabilities({})).toEqual({});
+    expect(decodeCapabilities([1, 2, 3])).toEqual({});
   });
 
-  it("decodes avatar_relay and ignores future unknown keys", () => {
-    const c = decodeCapabilities({ avatar_relay: true, future_flag: 7 });
-    expect(c.avatar_relay).toBe(true);
-    expect("future_flag" in c).toBe(false);
+  it("ignores unknown keys rather than failing on them", () => {
+    expect(decodeCapabilities({ future_flag: 7, avatar_relay: true })).toEqual({});
   });
 
-  it("encodes only first-class keys and coerces to boolean", () => {
-    expect(encodeCapabilities({ avatar_relay: true })).toEqual({ avatar_relay: true });
-    expect(encodeCapabilities({})).toEqual({ avatar_relay: false });
+  it("encodes to an empty bag", () => {
+    expect(encodeCapabilities({})).toEqual({});
+  });
+});
+
+describe("peer-facing avatar messages", () => {
+  // A client is only told about its own avatar; another client's arrives as
+  // ordinary geometry (plans/avatars_plan.md §2.2). Guards against the
+  // deleted peer-avatar codecs creeping back in.
+  it("do not exist", () => {
+    for (const name of [
+      "parsePeerAvatar",
+      "encodePeerAvatar",
+      "parsePeerAvatarFailed",
+      "encodePeerAvatarFailed",
+    ])
+      expect(name in avatarsModule).toBe(false);
+    expect(Object.values(AVATAR_SIGNAL_TYPES)).toEqual([
+      "avatar-policy",
+      "avatar-offer",
+      "avatar-result",
+      "avatar-revoke",
+    ]);
   });
 });
 
@@ -119,36 +138,15 @@ describe("AvatarResult", () => {
   });
 });
 
-describe("AvatarRevoke / PeerAvatar / PeerAvatarFailed", () => {
+describe("AvatarRevoke", () => {
   it("parses a revoke envelope", () => {
     const r = parseAvatarRevoke({ policy_id: "17", reason: "licence_expired" });
     expect(r).toEqual({ policy_id: 17n, reason: "licence_expired" });
   });
-
-  it("parses a peer-avatar envelope including proof", () => {
-    const p = parsePeerAvatar({
-      peer_client_id: "100",
-      peer_node_uid: "200",
-      url: "https://example.com/a.glb",
-      content_hash: "sha256:ff",
-      format: "glb",
-      proof: { scheme: "well-known-url", value: "https://example.com/.well-known/avatar-binding" },
-      revoked: false,
-    });
-    expect(p.peer_client_id).toBe(100n);
-    expect(p.peer_node_uid).toBe(200n);
-    expect(p.url).toBe("https://example.com/a.glb");
-    expect(p.proof?.scheme).toBe("well-known-url");
-  });
-
-  it("encodes peer-avatar-failed with reason", () => {
-    const f: PeerAvatarFailed = { peer_node_uid: 200n, reason: "404" };
-    expect(encodePeerAvatarFailed(f)).toEqual({ peer_node_uid: "200", reason: "404" });
-  });
 });
 
 describe("SignalingClient connect envelope", () => {
-  it("includes a capabilities object defaulting to avatar_relay=true", async () => {
+  it("includes an empty capabilities object", () => {
     const sc = new SignalingClient("ws://example.invalid/");
     // Reach into the instance without opening a real socket: stub sendJson
     // and verify the connect payload contains the capability bag.
@@ -157,21 +155,25 @@ describe("SignalingClient connect envelope", () => {
     sc.sendJson = (m: unknown) => sent.push(m);
     sc.sendConnect(0n);
     expect(sent).toHaveLength(1);
-    const msg = sent[0] as { "teleport-signal-type": string; content: { clientID: string; capabilities: { avatar_relay: boolean } } };
+    const msg = sent[0] as {
+      "teleport-signal-type": string;
+      content: { clientID: string; capabilities: Record<string, unknown> };
+    };
     expect(msg["teleport-signal-type"]).toBe("connect");
     expect(msg.content.clientID).toBe("0");
-    expect(msg.content.capabilities).toEqual({ avatar_relay: true });
+    expect(msg.content.capabilities).toEqual({});
   });
 
-  it("respects an override of capabilities.avatar_relay=false", () => {
+  it("does not advertise any avatar capability", () => {
+    // Relay is the default and needs no negotiation; advertising a
+    // capability we do not act on is what broke the previous design.
     const sc = new SignalingClient("ws://example.invalid/");
-    sc.capabilities = { avatar_relay: false };
     const sent: unknown[] = [];
     // @ts-expect-error: see above.
     sc.sendJson = (m: unknown) => sent.push(m);
     sc.sendConnect(42n);
-    const msg = sent[0] as { content: { clientID: string; capabilities: { avatar_relay: boolean } } };
+    const msg = sent[0] as { content: { clientID: string; capabilities: Record<string, unknown> } };
     expect(msg.content.clientID).toBe("42");
-    expect(msg.content.capabilities.avatar_relay).toBe(false);
+    expect(Object.keys(msg.content.capabilities)).toHaveLength(0);
   });
 });

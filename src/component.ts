@@ -202,7 +202,12 @@ export class TeleportViewerElement extends HTMLElement {
         : null;
     this.animation = new AnimationController();
     this.client.onAnimationClip((uid, decoded) => {
-      this.animation?.setClip(uid, decoded.clips[0], decoded.source);
+      this.animation?.setClip(
+        uid,
+        decoded.clips[0],
+        decoded.source,
+        decoded.humanoidBones,
+      );
     });
     this.adapter = new SceneAdapter(this.client.cache, {
       resolver: this.resolver ?? undefined,

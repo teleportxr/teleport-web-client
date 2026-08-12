@@ -237,12 +237,16 @@ export class SceneAdapter {
     // primitives. Clone it with SkeletonUtils so this instance gets bones and a
     // Skeleton of its own — THREE.Object3D.clone() would copy the meshes but leave
     // them bound to the original's skeleton, so every instance would move together.
-    const skinnedScene = decoded.find((dm) => dm.scene)?.scene;
-    if (skinnedScene) {
-      const instance = SkeletonUtils.clone(skinnedScene);
+    const skinnedSource = decoded.find((dm) => dm.scene);
+    if (skinnedSource?.scene) {
+      const instance = SkeletonUtils.clone(skinnedSource.scene);
       group.add(instance);
       entry.skinnedRoot = instance;
-      this.animation?.onSkinnedRootMounted(entry.uid, instance);
+      this.animation?.onSkinnedRootMounted(
+        entry.uid,
+        instance,
+        skinnedSource.humanoidBones,
+      );
       return;
     }
     for (let i = 0; i < decoded.length; i++) {

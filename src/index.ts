@@ -68,6 +68,7 @@ export {
   NodeDataType,
   TextureCompression,
   type AnimationPayload,
+  type AnimationPointerPayload,
   type BoneTrack,
   type FontAtlasPayload,
   type FontMap,
@@ -107,6 +108,12 @@ export { ResourceCache, type PendingPointer } from "./scene/cache.js";
 export { SceneAdapter, type SceneAdapterOptions } from "./scene/adapter.js";
 export { AnimationController } from "./scene/animation.js";
 export {
+  indexRig,
+  retargetHumanoidClip,
+  type RigIndex,
+  type RetargetOptions,
+} from "./scene/retarget.js";
+export {
   DefaultMeshDecoder,
   DefaultTextureDecoder,
   isGltfBinary,
@@ -133,6 +140,7 @@ export {
   type ParsedCommand,
   type SetupCommand,
   type AcknowledgeHandshakeCommand,
+  type ApplyAnimationCommand,
   type AudioConfig,
   type VideoConfig,
 } from "./wire/commands.js";

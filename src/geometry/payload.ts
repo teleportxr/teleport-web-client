@@ -155,6 +155,9 @@ export interface TexturePayload {
   compression: TextureCompression;
   /** Codec-specific payload (PNG / JPEG / KTX2 / packed PNG array). */
   data: Uint8Array;
+  /** The frame the contents are laid out in, carried over from the TexturePointer that
+   *  referred to this texture. Absent for a texture that arrived as an inline chunk. */
+  axesStandard?: AxesStandard;
 }
 
 export interface PositionKeyframe {
@@ -227,9 +230,11 @@ export interface TextCanvasPayload {
 export interface TexturePointerPayload {
   kind: GeometryPayloadType.TexturePointer;
   uid: Uid;
-  /** Leading byte of every pointer body. A texture has no geometric frame, so this is
-   *  a placeholder for future texture interpretation, currently always
-   *  `AxesStandard.NotInitialized`. */
+  /** Leading byte of every pointer body: the frame the texture's contents are laid out in.
+   *  Meaningful for cubemaps, whose six faces have an orientation — texture contents,
+   *  unlike geometry, are never converted by the server, so the client reorients its
+   *  sample directions instead. `AxesStandard.NotInitialized` means "the same as the
+   *  server's scene". */
   axesStandard: AxesStandard;
   url: string;
 }

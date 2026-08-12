@@ -71,7 +71,7 @@ describe("parseGeometryChunk — TexturePointer / MeshPointer", () => {
   it("decodes a TexturePointer URL", () => {
     const packet = chunk((w) => {
       w.u8(GeometryPayloadType.TexturePointer).u64(78n);
-      w.u8(AxesStandard.NotInitialized); // placeholder byte, leads every pointer body
+      w.u8(AxesStandard.NotInitialized); // axes byte, leads every pointer body
       writeString(w, "/a/b.ktx2");
     });
     const payload = parseGeometryChunk(packet);
@@ -80,6 +80,23 @@ describe("parseGeometryChunk — TexturePointer / MeshPointer", () => {
       expect(payload.uid).toBe(78n);
       expect(payload.axesStandard).toBe(AxesStandard.NotInitialized);
       expect(payload.url).toBe("/a/b.ktx2");
+    }
+  });
+
+  it("decodes a TexturePointer's declared axes standard", () => {
+    // Meaningful for cubemaps: the server never reprojects the file, so the byte says which
+    // frame its faces are laid out in and the client reorients its sample directions.
+    const packet = chunk((w) => {
+      w.u8(GeometryPayloadType.TexturePointer).u64(79n);
+      w.u8(AxesStandard.EngineeringStyle);
+      writeString(w, "/envCloudyCubemap.ktx2");
+    });
+    const payload = parseGeometryChunk(packet);
+    if (payload.kind === GeometryPayloadType.TexturePointer) {
+      expect(payload.axesStandard).toBe(AxesStandard.EngineeringStyle);
+      expect(payload.url).toBe("/envCloudyCubemap.ktx2");
+    } else {
+      throw new Error("expected TexturePointer");
     }
   });
 

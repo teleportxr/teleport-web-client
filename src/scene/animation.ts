@@ -20,6 +20,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { Uid } from "../wire/types.js";
 import type { ApplyAnimationCommand } from "../wire/commands.js";
 import { indexRig, retargetHumanoidClip, type RigIndex } from "./retarget.js";
+import { humanoidRoleFromName } from "./humanoid-names.js";
 
 /** What the server last asked a node to play. */
 interface DesiredState {
@@ -273,7 +274,11 @@ export class AnimationController {
       ? new Map(Object.entries(declared).map(([role, name]) => [name, role]))
       : null;
     const source = indexRig(sourceClip.source, (o) =>
-      !o.name ? undefined : roleByName ? roleByName.get(o.name) : o.name,
+      !o.name
+        ? undefined
+        : roleByName
+          ? roleByName.get(o.name)
+          : humanoidRoleFromName(o.name),
     );
     if (!source.byRole.size) return null;
     return retargetHumanoidClip(sourceClip.clip, source, rig.index);

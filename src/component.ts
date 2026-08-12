@@ -14,6 +14,7 @@ import {
   type TextureDecoder,
 } from "./scene/loaders.js";
 import { ResourceResolver } from "./scene/resources.js";
+import { applyCubemapOrientation } from "./scene/axes.js";
 import type { ParsedCommand } from "./wire/commands.js";
 import {
   BackgroundMode,
@@ -281,6 +282,9 @@ export class TeleportViewerElement extends HTMLElement {
             if (!(tex as THREE.CubeTexture).isCubeTexture) {
               tex.mapping = THREE.EquirectangularReflectionMapping;
             }
+            // The file need not be laid out in this client's frame; the server declares
+            // which frame and leaves the conversion to us.
+            this.scene.backgroundRotation.copy(applyCubemapOrientation(tex));
             this.scene.background = tex;
           })
           .catch((err) => {
@@ -312,11 +316,16 @@ export class TeleportViewerElement extends HTMLElement {
         // Process the cubemap (or equirect) into the pre-filtered radiance
         // pyramid that MeshStandardMaterial samples from based on roughness.
         const isCube = !!(tex as THREE.CubeTexture).isCubeTexture;
+        // Before the bake, not after: fromCubemap reads the texture's flip flag, and a product
+        // baked with the wrong value stays mirrored for the life of the texture.
+        const rotation = applyCubemapOrientation(tex);
         const product = isCube
           ? this.pmrem.fromCubemap(tex as THREE.CubeTexture)
           : this.pmrem.fromEquirectangular(tex);
         this.currentEnvTexture?.dispose();
         this.currentEnvTexture = product.texture;
+        // PMREM preserves the source's orientation, so the declared frame still applies.
+        this.scene.environmentRotation.copy(rotation);
         this.scene.environment = product.texture;
       })
       .catch((err) => {
@@ -336,6 +345,8 @@ export class TeleportViewerElement extends HTMLElement {
     if (this.scene) {
       this.scene.environment = null;
       this.scene.background = new THREE.Color(0x101418);
+      this.scene.backgroundRotation.set(0, 0, 0);
+      this.scene.environmentRotation.set(0, 0, 0);
     }
     this.currentEnvTexture?.dispose();
     this.currentEnvTexture = null;

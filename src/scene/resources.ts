@@ -63,6 +63,11 @@ export class ResourceResolver {
           .decode(payload.compression, payload.data)
           .then((tex) => {
             tex.name = payload.name;
+            // The frame the contents are laid out in, for callers that sample it as a
+            // cubemap. Carried on userData because it is ours, not Three's; see scene/axes.ts.
+            if (payload.axesStandard !== undefined) {
+              tex.userData.teleportAxesStandard = payload.axesStandard;
+            }
             resolve(tex);
           })
           .catch(reject);

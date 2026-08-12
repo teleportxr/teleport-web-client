@@ -11,6 +11,7 @@ import {
 import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
 import { TextureCompression } from "../geometry/payload.js";
 import { decodeBc6hKtx2 } from "./ktx2-bc6h.js";
+import { inferHumanoidBones } from "./humanoid-names.js";
 
 /** A mesh primitive ready to render: a BufferGeometry plus an optional
  *  baked-in material. When `material` is undefined the resolver supplies one
@@ -344,7 +345,11 @@ function decodeGltf(
               geometry: EMPTY_GEOMETRY,
               scene: gltf.scene,
               animations: gltf.animations ?? [],
-              humanoidBones: readVrmHumanoidBones(gltf),
+              // Declared mapping if there is one; otherwise guess from the bone names, so
+              // a plain skinned .glb — which the avatar negotiation accepts — can still be
+              // animated rather than standing in its bind pose.
+              humanoidBones:
+                readVrmHumanoidBones(gltf) ?? inferHumanoidBones(gltf.scene),
               name: gltf.scene.name,
             },
           ]);
@@ -428,13 +433,10 @@ function readVrmAnimationHumanoidBones(
     const name = json.nodes[nodeIndex]?.name;
     if (name) out[role] = name;
   }
-  if (Object.keys(out).length) return out;
-
-  // No node indices: a 1.0-beta file. Its roles are its node names, so accept any node
-  // whose name matches a role the extension lists.
-  for (const role of Object.keys(humanBones)) {
-    if (json.nodes.some((n) => n.name === role)) out[role] = role;
-  }
+  // No node indices at all: a 1.0-beta file, whose humanBones list is not a reliable
+  // inventory of the rig either — the Walking.vrma in use here omits `hips` from it while
+  // still animating that bone. Defer to inference from the node names, which is what a beta
+  // file's naming actually offers.
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -472,7 +474,8 @@ function decodeGltfAnimations(
         resolve({
           clips: gltf.animations ?? [],
           source: gltf.scene,
-          humanoidBones: readVrmAnimationHumanoidBones(gltf),
+          humanoidBones:
+            readVrmAnimationHumanoidBones(gltf) ?? inferHumanoidBones(gltf.scene),
         });
       },
       (err: unknown) => reject(err as Error),

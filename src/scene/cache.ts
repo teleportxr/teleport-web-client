@@ -4,7 +4,7 @@
 // Subscribers (e.g. the Three.js adapter) call `whenAvailable(uid, kind, cb)`
 // and receive the payload either immediately (if cached) or when it lands.
 
-import { GeometryPayloadType, type Uid } from "../wire/types.js";
+import { type AxesStandard, GeometryPayloadType, type Uid } from "../wire/types.js";
 import type {
   AnimationPayload,
   FontAtlasPayload,
@@ -33,6 +33,8 @@ export interface PendingPointer {
   uid: Uid;
   url: string;
   kind: GeometryPayloadType.TexturePointer | GeometryPayloadType.MeshPointer;
+  /** The frame the referenced asset is laid out in, as the pointer declared it. */
+  axesStandard: AxesStandard;
 }
 
 export class ResourceCache {
@@ -105,6 +107,7 @@ export class ResourceCache {
           uid: payload.uid,
           url: payload.url,
           kind: payload.kind,
+          axesStandard: payload.axesStandard,
         });
         // Do not flush waiters here; the body still has to be fetched.
         this.listeners.forEach((l) => l(payload));

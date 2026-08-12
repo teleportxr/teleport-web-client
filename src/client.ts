@@ -306,11 +306,11 @@ export class TeleportClient {
     }
 
     if (payload.kind === GeometryPayloadType.TexturePointer) {
-      this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Texture);
+      this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Texture, payload.axesStandard);
       return;
     }
     if (payload.kind === GeometryPayloadType.MeshPointer) {
-      this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Mesh);
+      this.fetchPointer(payload.uid, payload.url, GeometryPayloadType.Mesh, payload.axesStandard);
       return;
     }
     if (payload.kind === GeometryPayloadType.AnimationPointer) {
@@ -329,6 +329,7 @@ export class TeleportClient {
     uid: Uid,
     url: string,
     targetType: GeometryPayloadType.Texture | GeometryPayloadType.Mesh,
+    axesStandard: AxesStandard,
   ): void {
     // HTTP-fetched resources are never in a teleport-native struct format —
     // they're always standard files (KTX2 / PNG / JPEG / GLB / Draco). We
@@ -342,7 +343,7 @@ export class TeleportClient {
         if (targetType === GeometryPayloadType.Texture) {
           const hint = resolveTextureFormat(asset.mime, asset.url, asset.bytes);
           if (hint) {
-            payload = synthTexturePayload(uid, url, hint.compression, asset.bytes);
+            payload = synthTexturePayload(uid, url, hint.compression, asset.bytes, axesStandard);
           }
         } else {
           const hint = resolveMeshFormat(asset.mime, asset.url, asset.bytes);
@@ -540,6 +541,7 @@ function synthTexturePayload(
   url: string,
   compression: TextureCompression,
   body: Uint8Array,
+  axesStandard: AxesStandard,
 ): TexturePayload {
   return {
     kind: GeometryPayloadType.Texture,
@@ -547,6 +549,7 @@ function synthTexturePayload(
     name: url,
     compression,
     data: body,
+    axesStandard,
   };
 }
 

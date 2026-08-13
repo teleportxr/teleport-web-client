@@ -43,7 +43,12 @@ export class ResourceResolver {
     if (p) return p;
     p = new Promise((resolve, reject) => {
       this.cache.whenAvailable(uid, GeometryPayloadType.Mesh, (payload) => {
-        Promise.all(payload.submeshes.map((sm) => this.meshDecoder.decode(sm.buffer)))
+        // sourceUrl is where a MeshPointer fetched the asset from. A glTF that references its
+        // textures as external files writes those uris relative to itself, so the decoder
+        // cannot resolve them without it.
+        Promise.all(
+          payload.submeshes.map((sm) => this.meshDecoder.decode(sm.buffer, payload.sourceUrl)),
+        )
           .then((groups) => resolve(groups.flat()))
           .catch(reject);
       });
@@ -67,6 +72,13 @@ export class ResourceResolver {
             // cubemap. Carried on userData because it is ours, not Three's; see scene/axes.ts.
             if (payload.axesStandard !== undefined) {
               tex.userData.teleportAxesStandard = payload.axesStandard;
+            }
+            // The url is the identity of a texture resource. Tell the mesh decoder, so that a
+            // glTF whose image uri resolves to this url uses this texture instead of fetching
+            // and decoding the same file a second time — which is the whole point of the
+            // server streaming a mesh's external textures alongside it.
+            if (payload.sourceUrl) {
+              this.meshDecoder.registerTexture?.(payload.sourceUrl, tex);
             }
             resolve(tex);
           })

@@ -110,6 +110,13 @@ export interface MeshPayload {
   /** Tightly packed mat4s, one per joint. */
   invBindData: Uint8Array;
   submeshes: MeshSubmesh[];
+  /** The url this mesh was fetched from, for a mesh delivered as a MeshPointer. Absent for a
+   *  mesh that arrived as an inline chunk, which has no source document.
+   *
+   *  A glTF may reference its textures as external files, and those uris are relative to the
+   *  asset — so decoding one without knowing where it came from resolves them against the
+   *  page instead, and the textures 404. */
+  sourceUrl?: string;
 }
 
 export interface TextureAccessor {
@@ -158,6 +165,11 @@ export interface TexturePayload {
   /** The frame the contents are laid out in, carried over from the TexturePointer that
    *  referred to this texture. Absent for a texture that arrived as an inline chunk. */
   axesStandard?: AxesStandard;
+  /** The url this texture was fetched from, for a texture delivered as a TexturePointer.
+   *
+   *  The url is the identity of a texture resource: a glTF image uri that resolves to the same
+   *  url names this very texture, and must reuse it rather than fetch a second copy. */
+  sourceUrl?: string;
 }
 
 export interface PositionKeyframe {

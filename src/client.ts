@@ -530,6 +530,9 @@ function synthGltfMeshPayload(
     name: url,
     invBindData: new Uint8Array(0),
     submeshes: [{ buffer: body }],
+    // Where it came from: a glTF's own image uris are relative to it, so the decoder
+    // cannot resolve them without this.
+    sourceUrl: url,
   };
 }
 
@@ -550,6 +553,9 @@ function synthTexturePayload(
     compression,
     data: body,
     axesStandard,
+    // The url is the identity of this texture resource; a glTF image uri resolving to it
+    // names this texture rather than one of its own.
+    sourceUrl: url,
   };
 }
 

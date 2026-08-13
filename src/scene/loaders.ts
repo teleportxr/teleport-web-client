@@ -51,8 +51,16 @@ export interface DecodedMesh {
 
 export interface MeshDecoder {
   /** Decode a single submesh buffer. Returns one or more renderable
-   *  primitives (a Draco buffer yields one; a glTF binary may yield many). */
-  decode(bytes: Uint8Array): Promise<DecodedMesh[]>;
+   *  primitives (a Draco buffer yields one; a glTF binary may yield many).
+   *
+   *  `sourceUrl` is the url the buffer was fetched from, where there is one. A glTF may
+   *  reference its textures (and buffers) as external files, and those uris are relative to
+   *  the asset — without it they resolve against the page instead and 404. */
+  decode(bytes: Uint8Array, sourceUrl?: string): Promise<DecodedMesh[]>;
+  /** Note that `url` delivered `texture`, so a glTF image uri resolving to that url reuses it
+   *  rather than fetching the same file again. Optional: a decoder that does not load external
+   *  images has nothing to reuse. */
+  registerTexture?(url: string, texture: THREE.Texture): void;
   /** Decode an animation file (.vrma / .glb) into its clips and the rig they were
    *  authored against. Both are needed: a clip only drives a skeleton whose bones its
    *  tracks name, so where the avatar's rig differs the clip has to be retargeted from
@@ -219,6 +227,41 @@ function extensionOf(url: string): string {
   return dot === -1 ? "" : tail.slice(dot + 1).toLowerCase();
 }
 
+/** The loader three's GLTFLoader is given for a glTF's external image uris.
+ *
+ *  A .glb may reference its textures as external files, and the server streams those same
+ *  files as TexturePointer resources because the mesh depends on them. So where the url names
+ *  a texture we have already been given, that texture is the answer: fetching and decoding the
+ *  same file again would double the traffic and the GPU memory for no gain. Anything else is
+ *  loaded normally. */
+class SharedTextureLoader extends THREE.Loader<THREE.Texture> {
+  private readonly textures: Map<string, THREE.Texture>;
+  private readonly fallback: THREE.TextureLoader;
+
+  constructor(textures: Map<string, THREE.Texture>) {
+    super();
+    this.textures = textures;
+    // Deliberately not on the same manager: it would route straight back here.
+    this.fallback = new THREE.TextureLoader();
+  }
+
+  override load(
+    url: string,
+    onLoad?: (texture: THREE.Texture) => void,
+    onProgress?: (event: ProgressEvent) => void,
+    onError?: (err: unknown) => void,
+  ): THREE.Texture {
+    const existing = this.textures.get(url);
+    if (existing) {
+      // Asynchronously, as three's own loaders are: a synchronous callback here would run
+      // before GLTFLoader has finished wiring up the material that asked for it.
+      if (onLoad) queueMicrotask(() => onLoad(existing));
+      return existing;
+    }
+    return this.fallback.load(url, onLoad, onProgress, onError);
+  }
+}
+
 /** Default mesh decoder: dispatches on the buffer's leading magic. glTF
  *  binaries go through three's GLTFLoader (and bring their own materials
  *  and textures with them); everything else is treated as a raw Draco
@@ -227,6 +270,12 @@ function extensionOf(url: string): string {
 export class DefaultMeshDecoder implements MeshDecoder {
   private readonly draco: DRACOLoader;
   private readonly gltf: GLTFLoader;
+  private readonly manager: THREE.LoadingManager;
+  /** Textures already delivered as resources, by the url they came from. A glTF that
+   *  references one of those files gets that very texture rather than fetching its own copy:
+   *  the server streams a mesh's external textures precisely because the mesh needs them, so
+   *  the same file arriving twice is pure waste. Fed by `registerTexture`. */
+  private readonly texturesByUrl = new Map<string, THREE.Texture>();
 
   constructor(
     decoderPath: string = "https://www.gstatic.com/draco/v1/decoders/",
@@ -234,13 +283,23 @@ export class DefaultMeshDecoder implements MeshDecoder {
     this.draco = new DRACOLoader();
     this.draco.setDecoderPath(decoderPath);
     this.draco.preload();
-    this.gltf = new GLTFLoader();
+    // GLTFLoader asks the manager for a loader per image url; ours hands back a texture we
+    // have already been given, and loads the rest normally.
+    this.manager = new THREE.LoadingManager();
+    this.manager.addHandler(/.*/, new SharedTextureLoader(this.texturesByUrl));
+    this.gltf = new GLTFLoader(this.manager);
     this.gltf.setDRACOLoader(this.draco);
   }
 
-  async decode(bytes: Uint8Array): Promise<DecodedMesh[]> {
+  /** Note the texture a url delivered, so a glTF image uri resolving to that url reuses it.
+   *  Called by the resource resolver as TexturePointer textures decode. */
+  registerTexture(url: string, texture: THREE.Texture): void {
+    if (url) this.texturesByUrl.set(url, texture);
+  }
+
+  async decode(bytes: Uint8Array, sourceUrl?: string): Promise<DecodedMesh[]> {
     if (isGltfBinary(bytes)) {
-      return decodeGltf(this.gltf, bytes);
+      return decodeGltf(this.gltf, bytes, sourceUrl);
     }
     const geo = await decodeDraco(this.draco, bytes);
     return [{ geometry: geo }];
@@ -320,15 +379,29 @@ function decodeDraco(
   });
 }
 
+/** The directory a document sits in, as glTF resolves its own uris against: everything up to
+ *  and including the last "/", with any query or fragment discarded first. "" when there is no
+ *  source url, which is what three then resolves against the page. */
+export function resourcePathOf(sourceUrl?: string): string {
+  if (!sourceUrl) return "";
+  const path = sourceUrl.split(/[?#]/, 1)[0]!;
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash + 1);
+}
+
 function decodeGltf(
   loader: GLTFLoader,
   bytes: Uint8Array,
+  sourceUrl?: string,
 ): Promise<DecodedMesh[]> {
   return new Promise((resolve, reject) => {
     const ab = toStandaloneArrayBuffer(bytes);
     loader.parse(
       ab,
-      "",
+      // The asset's own directory. A glTF that references its textures as external files
+      // writes those uris relative to itself, so this is what makes them resolvable; passing
+      // "" resolves them against the page instead, which only works by accident.
+      resourcePathOf(sourceUrl),
       (gltf: GLTF) => {
         const out: DecodedMesh[] = [];
         gltf.scene.updateMatrixWorld(true);
